@@ -4,9 +4,9 @@ Simple expression based functional language compiler.
 ## Values
 Functions are first class values in this language. Values are all typed by the following type system:
 ```
-$\tau$ ::= int | bool | $\tau_1 \to \tau_2$ | $\alpha$
+τ ::= int | bool | τ1 -> τ2 | α
 ```
-where $\alpha$ is a polymorphic type variable.
+where α is a polymorphic type variable.
 A value may have any of these types.
 
 ## Let expressions
@@ -21,7 +21,7 @@ where "x" is an identifier name, "e1" is the bound expression, and "e2" is the u
 Lambda expressions create a lambda abstraction with a named identifier.
 The syntax for a lambda expression is as follows:
 ```
-\$x -> e
+$x -> e
 ```
 where "x" is an identifier name and "e" is the function body (i.e. equivalent to $\lambda x. e$)
 
