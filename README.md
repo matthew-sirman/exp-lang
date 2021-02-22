@@ -23,7 +23,7 @@ The syntax for a lambda expression is as follows:
 ```
 $x -> e
 ```
-where "x" is an identifier name and "e" is the function body (i.e. equivalent to $\lambda x. e$)
+where "x" is an identifier name and "e" is the function body (i.e. equivalent to λx. e)
 
 ## Binary operators
 There is a fixed set of binary operators available, namely +, -, *, /, <, >, <=, >= and ==.
