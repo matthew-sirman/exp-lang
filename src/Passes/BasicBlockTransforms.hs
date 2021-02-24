@@ -4,6 +4,7 @@ import qualified IR
 import Builtin
 -- import Data.Sequence as Seq
 
+{-
 flattenBinaryOperations :: [IR.Instruction] -> [IR.Instruction]
 flattenBinaryOperations (i0@(IR.Call t0 (IR.Builtin b) lhs):i1@(IR.Call t1 (IR.Variable t0') rhs):is)
     | t0 == t0' = replace b t1 lhs rhs : flattenBinaryOperations is
@@ -23,7 +24,8 @@ flattenBinaryOperations (i0@(IR.Call t0 (IR.Builtin b) lhs):i1@(IR.Call t1 (IR.V
 
 flattenBinaryOperations [] = []
 flattenBinaryOperations (i:is) = i : flattenBinaryOperations is
+-}
 
-constantFoldingPass :: [IR.Instruction] -> [IR.Instruction]
+constantFoldingPass :: [IR.Instruction a] -> [IR.Instruction a]
 constantFoldingPass = id
 

@@ -1,24 +1,27 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module IR where
 
 import qualified Data.Map as M
 import Data.Sequence as Seq
+import Control.Monad.Except
 import Builtin
 
 type Label = String
 type VarID = Int
 type FuncID = String
-type PhiNode = (Value, Label)
+type PhiNode r = (Value r, Label)
 
 showLabel :: Label -> String
 showLabel l = l
 
-showVar :: VarID -> String
+showVar :: Show v => v -> String
 showVar v = "tmp" ++ show v
 
 showFunc :: FuncID -> String
 showFunc f = f
 
-showPhiNode :: PhiNode -> String
+showPhiNode :: Show r => PhiNode r -> String
 showPhiNode (v, lab) = show v ++ " : " ++ showLabel lab
 
 data Immediate
@@ -33,39 +36,46 @@ instance Show Immediate where
             bin True = "1"
             bin False = "0"
 
-data Value
+data Value r
     = Immediate Immediate
-    | Variable VarID
+    | Variable r
     | UserFunc FuncID
     | Builtin Builtin
     | Argument
     deriving (Ord, Eq)
 
-instance Show Value where
+instance Show r => Show (Value r) where
     show (Immediate imm) = show imm
     show (Variable v) = showVar v
     show (UserFunc f) = showFunc f
     show (Builtin b) = show b
     show Argument = "arg"
 
-data Instruction
-    = Add VarID Value Value         -- adds two values and assigns to VarID
-    | Sub VarID Value Value         -- subtracts two values and assigns to VarID
-    | Mul VarID Value Value         -- multiplies two values and assigns to VarID
-    | Div VarID Value Value         -- divids two values and assigns to VarID
-    | EQ VarID Value Value          -- tests whether lhs = rhs and assigns to VarID
-    | LT VarID Value Value          -- tests whether lhs < rhs and assigsn to VarID
-    | GT VarID Value Value          -- tests whether lhs > rhs and assigsn to VarID
-    | LE VarID Value Value          -- tests whether lhs <= rhs and assigsn to VarID
-    | GE VarID Value Value          -- tests whether lhs >= rhs and assigsn to VarID
-    | Call VarID Value Value        -- calls a function with a value, and assigns to VarID
-    | Branch Value Label            -- conditional branch to label on value
-    | Jump Label                    -- unconditional branch to label
-    | Phi VarID PhiNode PhiNode     -- coalesces two values into a VarID based on branches
-    | Ret Value                     -- returns a value from a function
+instance Functor Value where
+    fmap _ (Immediate imm) = Immediate imm
+    fmap f (Variable v) = Variable (f v)
+    fmap _ (UserFunc f) = UserFunc f
+    fmap _ (Builtin b) = Builtin b
+    fmap _ Argument = Argument
+
+data Instruction r
+    = Add r (Value r) (Value r)         -- adds two values and assigns to VarID
+    | Sub r (Value r) (Value r)         -- subtracts two values and assigns to VarID
+    | Mul r (Value r) (Value r)         -- multiplies two values and assigns to VarID
+    | Div r (Value r) (Value r)         -- divids two values and assigns to VarID
+    | EQ r (Value r) (Value r)          -- tests whether lhs = rhs and assigns to VarID
+    | LT r (Value r) (Value r)          -- tests whether lhs < rhs and assigsn to VarID
+    | GT r (Value r) (Value r)          -- tests whether lhs > rhs and assigsn to VarID
+    | LE r (Value r) (Value r)          -- tests whether lhs <= rhs and assigsn to VarID
+    | GE r (Value r) (Value r)          -- tests whether lhs >= rhs and assigsn to VarID
+    | Call r (Value r) (Value r)        -- calls a function with a value, and assigns to VarID
+    | Branch (Value r) Label            -- conditional branch to label on value
+    | Jump Label                        -- unconditional branch to label
+    | Phi r (PhiNode r) (PhiNode r)     -- coalesces two values into a VarID based on branches
+    | Ret (Value r)                     -- returns a value from a function
     deriving (Ord, Eq)
 
-instance Show Instruction where
+instance Show r => Show (Instruction r) where
     show (IR.Add v e1 e2) = showVar v ++ " = add " ++ show e1 ++ ", " ++ show e2 
     show (IR.Sub v e1 e2) = showVar v ++ " = sub " ++ show e1 ++ ", " ++ show e2 
     show (IR.Mul v e1 e2) = showVar v ++ " = mul " ++ show e1 ++ ", " ++ show e2 
@@ -83,45 +93,73 @@ instance Show Instruction where
 
     show (Phi v p1 p2) = showVar v ++ " = phi [" ++ showPhiNode p1 ++ ", " ++ showPhiNode p2 ++ "]"
     show (Ret v) = "ret " ++ show v
-    
-data BasicBlock = BasicBlock
+
+instance Functor Instruction where
+    fmap f (IR.Add v l r)   = IR.Add (f v) (f <$> l) (f <$> r)
+    fmap f (IR.Sub v l r)   = IR.Sub (f v) (f <$> l) (f <$> r)
+    fmap f (IR.Mul v l r)   = IR.Mul (f v) (f <$> l) (f <$> r)
+    fmap f (IR.Div v l r)   = IR.Div (f v) (f <$> l) (f <$> r)
+    fmap f (IR.EQ v l r)    = IR.EQ (f v) (f <$> l) (f <$> r)
+    fmap f (IR.LT v l r)    = IR.LT (f v) (f <$> l) (f <$> r)
+    fmap f (IR.GT v l r)    = IR.GT (f v) (f <$> l) (f <$> r)
+    fmap f (IR.LE v l r)    = IR.LE (f v) (f <$> l) (f <$> r)
+    fmap f (IR.GE v l r)    = IR.GE (f v) (f <$> l) (f <$> r)
+    fmap f (IR.Call v cf a) = IR.Call (f v) (f <$> cf) (f <$> a)
+    fmap f (IR.Branch v l)  = IR.Branch (f <$> v) l
+    fmap f (IR.Jump l)      = IR.Jump l
+    fmap f (IR.Phi v (vl, ll) (vr, lr)) = IR.Phi (f v) (f <$> vl, ll) (f <$> vr, lr)
+    fmap f (IR.Ret v)       = IR.Ret (f <$> v)
+   
+data BasicBlock r = BasicBlock
     { label :: Label
-    , iList :: Seq Instruction
+    , iList :: Seq (Instruction r)
     }
 
-instance Show BasicBlock where
+instance Show r => Show (BasicBlock r) where
     show (BasicBlock lab is) = showLabel lab ++ ":\n" ++ concatMap (\i -> "    " ++ show i ++ "\n") is
 
-mkBasicBlock :: Label -> BasicBlock
+instance Functor BasicBlock where
+    fmap f bb@(BasicBlock _ is) = bb { iList = (f <$>) <$> is }
+
+mkBasicBlock :: Label -> BasicBlock r
 mkBasicBlock lab = BasicBlock lab Seq.empty
 
-blockIPushFront :: Instruction -> BasicBlock -> BasicBlock
+blockIPushFront :: Instruction r -> BasicBlock r -> BasicBlock r
 blockIPushFront i blk = blk { iList = i :<| iList blk }
 
-blockIPush :: Instruction -> BasicBlock -> BasicBlock
+blockIPush :: Instruction r -> BasicBlock r -> BasicBlock r
 blockIPush i blk = blk { iList = iList blk :|> i }
 
-data Function = Function
+data Function r = Function
     { fid :: FuncID
-    , blocks :: Seq BasicBlock
+    , blocks :: Seq (BasicBlock r)
     }
 
-instance Show Function where
-    show (Function f bs) = showFunc f ++ "(" ++ show Argument ++ ") {\n" ++ concatMap show bs ++ "}\n\n"
+instance Show r => Show (Function r) where
+    show (Function f bs) = showFunc f ++ "(" ++ show (Argument :: Value r) ++ ") {\n" ++ concatMap show bs ++ "}\n\n"
 
-mkFunc :: FuncID -> Function
+instance Functor Function where
+    fmap f (Function name bs) = Function name ((f <$>) <$> bs)
+
+mkFunc :: FuncID -> Function r
 mkFunc nm = Function nm Seq.empty
 
-pushBlock :: BasicBlock -> Function -> Function
-pushBlock blk func = func { blocks = blocks func :|> blk }
+pushBlock :: BasicBlock r -> Function r -> Function r
+pushBlock blk (Function name bs) = Function name (bs :|> blk)
 
-newtype Program = Program
-    { funcs :: M.Map FuncID Function
+newtype Program regModel = Program
+    { funcs :: M.Map FuncID (Function regModel)
     }
 
-instance Show Program where
+instance Show r => Show (Program r) where
     show (Program fs) = concatMap show (M.elems fs)
 
-progAddFunc :: Function -> Program -> Program
-progAddFunc f@(Function name _) prog = prog { funcs = M.insert name f (funcs prog) }
+instance Functor Program where
+    fmap f (Program fs) = Program ((f <$>) <$> fs)
+
+progAddFunc :: Function r -> Program r -> Program r
+progAddFunc f@(Function name _) (Program fs) = Program (M.insert name f fs)
+
+allocateRegisters :: (VarID -> a) -> Program VarID -> Program a
+allocateRegisters = fmap
 

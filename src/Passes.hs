@@ -1,3 +1,5 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module Passes (
     applyLinearITransform
   , applyInstructionTransform
@@ -13,20 +15,24 @@ import qualified IR
 
 import Passes.BasicBlockTransforms
 
-applyLinearITransform :: ([IR.Instruction] -> [IR.Instruction]) -> IR.BasicBlock -> IR.BasicBlock
+applyLinearITransform :: ([IR.Instruction a] -> [IR.Instruction b]) 
+                      -> IR.BasicBlock a -> IR.BasicBlock b
 applyLinearITransform transform bb = applyInstructionTransform transform' bb
     where
         transform' = Seq.fromList . transform . toList
 
-applyInstructionTransform :: (Seq IR.Instruction -> Seq IR.Instruction) -> IR.BasicBlock -> IR.BasicBlock
+applyInstructionTransform :: (Seq (IR.Instruction a) -> Seq (IR.Instruction b)) 
+                          -> IR.BasicBlock a -> IR.BasicBlock b
 applyInstructionTransform transform (IR.BasicBlock lab is) = IR.BasicBlock lab (transform is)
 
-applyBasicTransform :: (IR.BasicBlock -> IR.BasicBlock) -> IR.Program -> IR.Program
+applyBasicTransform :: forall a b. (IR.BasicBlock a -> IR.BasicBlock b) 
+                    -> IR.Program a -> IR.Program b
 applyBasicTransform transform = applyFunctionTransform ftrans
     where
-        ftrans :: IR.Function -> IR.Function
+        ftrans :: IR.Function a -> IR.Function b
         ftrans (IR.Function name bs) = IR.Function name (transform <$> bs)
 
-applyFunctionTransform :: (IR.Function -> IR.Function) -> IR.Program -> IR.Program
+applyFunctionTransform :: (IR.Function a -> IR.Function b) 
+                       -> IR.Program a -> IR.Program b
 applyFunctionTransform transform (IR.Program fs) = IR.Program (M.map transform fs)
 

@@ -9,23 +9,23 @@ import Control.Monad.State
 import qualified Data.Map as M
 
 data ProgState = ProgState
-    { bstack :: [IR.BasicBlock]
-    , fstack :: [IR.Function]
-    , prog :: IR.Program
+    { bstack :: [IR.BasicBlock IR.VarID]
+    , fstack :: [IR.Function IR.VarID]
+    , prog :: IR.Program IR.VarID
     , labelID :: Int
     , funcID :: Int
     , varID :: IR.VarID
     }
 
-type VarContext = M.Map Identifier IR.Value
+type VarContext = M.Map Identifier (IR.Value IR.VarID)
 
 emptyCtx :: VarContext
 emptyCtx = M.empty
 
-ctxAdd :: Identifier -> IR.Value -> VarContext -> VarContext
+ctxAdd :: Identifier -> IR.Value IR.VarID -> VarContext -> VarContext
 ctxAdd = M.insert
 
-ctxLookup :: Identifier -> VarContext -> IR.Value
+ctxLookup :: Identifier -> VarContext -> (IR.Value IR.VarID)
 ctxLookup name ctx = 
     case M.lookup name ctx of
         Just v -> v
@@ -52,10 +52,10 @@ reconstructBuiltins = reconstruct
         reconstruct (TVar (Identifier i)) = BTVar i
         reconstruct (TVar (Builtin i)) = error $ "DEV: Failed to reconstruct binary operator '" ++ show i ++ "'."
 
-compile :: TExpr -> IR.Program
+compile :: TExpr -> IR.Program IR.VarID
 compile = mkProgram . reconstructBuiltins
     where
-        mkProgram :: BTExpr -> IR.Program
+        mkProgram :: BTExpr -> IR.Program IR.VarID
         mkProgram expr = p
             where
                 finalise :: State ProgState ()
@@ -71,7 +71,7 @@ compile = mkProgram . reconstructBuiltins
                 (_, ps) = runState finalise startState
                 p = prog ps
 
-        codegen :: VarContext -> BTExpr -> State ProgState IR.Value
+        codegen :: VarContext -> BTExpr -> State ProgState (IR.Value IR.VarID)
 
         codegen ctx (BTApp f a) = do
             -- Generate the function itself
@@ -279,7 +279,7 @@ compile = mkProgram . reconstructBuiltins
                     (vid, ps { varID = vid + 1 })
 
         -- Pop the top block off the stack and return it
-        popBlock :: State ProgState IR.BasicBlock
+        popBlock :: State ProgState (IR.BasicBlock IR.VarID)
         popBlock = do
             (b, ps) <- gets pop
             put ps
@@ -289,7 +289,7 @@ compile = mkProgram . reconstructBuiltins
                     (b, ps { bstack = bs })
 
         -- Add a block to the end of the current function
-        applyBlock :: IR.BasicBlock -> State ProgState ()
+        applyBlock :: (IR.BasicBlock IR.VarID) -> State ProgState ()
         applyBlock blk = do
             modify appBlock
             where
@@ -320,7 +320,7 @@ compile = mkProgram . reconstructBuiltins
                 bl (ProgState (b:_) _ _ _ _ _) = IR.label b
 
         -- Add an instruction to the end of the current block
-        addInstruction :: IR.Instruction -> State ProgState ()
+        addInstruction :: IR.Instruction IR.VarID -> State ProgState ()
         addInstruction i = do
             modify addI
             where 
