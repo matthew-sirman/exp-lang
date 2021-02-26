@@ -4,6 +4,7 @@ module IR (
   , module IR.Function
   , module IR.Program
   , module IR.FlowGraph
+  , module IR.LVA
 ) where
 
 -- Top level module for the IR. Imports the submodules
@@ -15,4 +16,5 @@ import IR.BasicBlock
 import IR.Function
 import IR.Program
 import IR.FlowGraph
+import IR.LVA
 
