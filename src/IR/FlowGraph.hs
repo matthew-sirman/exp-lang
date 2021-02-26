@@ -1,3 +1,3 @@
-module FlowGraph where
+module IR.FlowGraph where
 
 
