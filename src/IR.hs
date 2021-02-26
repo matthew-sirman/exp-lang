@@ -1,6 +1,23 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module IR where
+module IR (
+    Label
+  , VarID
+  , FuncID
+  , Immediate(..)
+  , Value(..)
+  , Instruction(..)
+  , BasicBlock(..)
+  , mkBasicBlock
+  , blockIPushFront
+  , blockIPush
+  , Function(..)
+  , mkFunc
+  , pushBlock
+  , Program(..)
+  , progAddFunc
+  , allocateRegisters
+) where
 
 import qualified Data.Map as M
 import Data.Sequence as Seq

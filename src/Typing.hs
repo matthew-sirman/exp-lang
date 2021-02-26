@@ -1,4 +1,10 @@
-module Typing where
+module Typing (
+    TypeError
+  , TExpr(..)
+  , inferTypeTree
+
+  , module Types
+) where
 
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -6,7 +12,6 @@ import Control.Monad.State
 import Control.Monad.Trans.Except
 import SyntaxTree
 import Types
-import Builtin
 
 -- Create an alias of string for a type error
 type TypeError = String
@@ -195,9 +200,11 @@ type TI a = ExceptT TypeError (State InferState) a
 
 -- Main type inference algorithm. Takes an untyped expression and annotates
 -- each term, as well as returning the overall type of the program
-inferTypeTree :: Expr -> Either TypeError (Substitution, TExpr, Type)
-inferTypeTree expr = evalState (runExceptT (itt defaultEnv expr)) emptyState
+inferTypeTree :: Expr -> Either TypeError (TExpr, Type)
+inferTypeTree expr = dropSubstitution <$> evalState (runExceptT (itt defaultEnv expr)) emptyState
     where
+        dropSubstitution (_, te, t) = (te, t)
+
         itt :: TypeEnv -> Expr -> TI (Substitution, TExpr, Type)
 
         itt env (Application e0 e1) = do

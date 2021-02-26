@@ -1,4 +1,10 @@
-module Builtin where
+module Builtin (
+    BinOp(..)
+  , CmpOp(..)
+  , Builtin(..)
+  , builtinType
+  , builtinList
+) where
 
 import Types
 

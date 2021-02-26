@@ -1,4 +1,10 @@
-module Types where
+module Types (
+    PolyID
+  , Type(..)
+  , isBoolTy
+  , isIntTy
+  , polyName
+) where
 
 -- Polymorphic type disambiguation
 type PolyID = Int

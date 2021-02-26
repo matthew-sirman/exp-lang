@@ -1,9 +1,9 @@
-module Compiler where
+module Compiler (
+    compile
+) where
 
 import SyntaxTree
-import Types
 import Typing
-import Builtin
 import qualified IR
 import Control.Monad.State
 import qualified Data.Map as M

@@ -1,4 +1,12 @@
-module SyntaxTree where
+module SyntaxTree (
+    Identifier
+  , Symbol(..)
+  , Literal(..)
+  , Expr(..)
+  , convertToAST
+
+  , module Builtin
+) where
 
 import qualified Parser as P
 import Builtin
