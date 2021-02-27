@@ -6,7 +6,7 @@ import SyntaxTree
 import Typing
 import qualified IR
 import Control.Monad.State
-import qualified Data.Map as M
+import qualified Data.HashMap.Strict as M
 
 -- State uses while building a program's IR
 data ProgState = ProgState

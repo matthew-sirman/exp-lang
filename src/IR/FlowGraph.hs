@@ -8,8 +8,8 @@ module IR.FlowGraph (
   , createFlowGraph
 ) where
 
-import qualified Data.Set as S
-import qualified Data.Map as M
+import qualified Data.HashSet as S
+import qualified Data.HashMap.Strict as M
 import Data.Sequence as Seq hiding (zip)
 import Data.Foldable (toList)
 import qualified IR.Instruction as IR

@@ -3,10 +3,11 @@
 module IR.LVA (
     LVABasicBlock(..)
   , findLiveVarsDAG
+  , createClashGraph
 ) where
 
-import qualified Data.Set as S
-import qualified Data.Map as M
+import qualified Data.HashSet.Strict as S
+import qualified Data.HashMap.Strict as M
 import Control.Monad.State
 import Data.Maybe (fromJust)
 import Data.Foldable (toList)
@@ -33,6 +34,14 @@ instance Show r => Show (LVABasicBlock r) where
             showSet s
                 | S.null s = "{}"
                 | otherwise = "{" ++ concat (intersperse ", " $ map show $ toList s) ++ "}"
+
+-- Data structure for an undirected register clash graph
+-- There is an edge present between nodes A and B if they
+-- appear simultaneously in any live variable set
+data ClashGraph r = ClashGraph
+    { clashes :: M.Map r (S.Set r)
+    }
+    deriving Show
 
 -- Shoudl be semantically equivalent to foldl . reverse, but
 -- more efficient with sequences
@@ -156,4 +165,23 @@ findLiveVarsDAG (IR.FlowGraph nodes entry exit) = (fvs, IR.FlowGraph lvGraph ent
                         update :: LVState r -> LVState r
                         update (memMap, graph) = (M.insert nid predSet memMap, M.insert nid newNode graph)
                         newNode = IR.Node (IR.BlockNode newBB) is os
+
+createClashGraph :: forall r. (Ord r) => IR.FlowGraph (LVABasicBlock r) -> ClashGraph r
+createClashGraph graph = ClashGraph $ M.unionsWith S.union $ map findBBClashes $ M.elems (IR.nodes graph)
+    where
+        findBBClashes :: IR.Node (LVABasicBlock r) -> M.Map r (S.Set r)
+        -- Entry and exit nodes have no instructions, thus no clashes
+        findBBClashes (IR.Node IR.Entry _ _) = M.empty
+        findBBClashes (IR.Node IR.Exit _ _) = M.empty
+        -- Block nodes: for each instruction, add the clash set, and fold these into one map
+        findBBClashes (IR.Node (IR.BlockNode (LVABasicBlock _ lvSets)) _ _) = foldl addClashes M.empty lvSets
+
+        -- To add the clashes for a single instruction, for each element e in the set S
+        -- create a mapping from e to (S \ {e}), taking the union if e is already in the
+        -- mapping
+        addClashes :: M.Map r (S.Set r) -> S.Set r -> M.Map r (S.Set r)
+        addClashes m s = foldl addElem m $ toList s
+            where
+                addElem :: M.Map r (S.Set r) -> r -> M.Map r (S.Set r)
+                addElem m' e = M.insertWith S.union e (S.delete e s) m'
 

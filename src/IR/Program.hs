@@ -4,7 +4,7 @@ module IR.Program (
   , allocateRegisters
 ) where
 
-import qualified Data.Map as M
+import qualified Data.HashMap.Strict as M
 import IR.Instruction (VarID)
 import IR.Function
 

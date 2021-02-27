@@ -6,8 +6,8 @@ module Typing (
   , module Types
 ) where
 
-import qualified Data.Map as M
-import qualified Data.Set as S
+import qualified Data.HashMap.Strict as M
+import qualified Data.HashSet as S
 import Control.Monad.State
 import Control.Monad.Trans.Except
 import SyntaxTree
