@@ -4,7 +4,7 @@ module IR.Program (
   , allocateRegisters
 ) where
 
-import qualified Data.HashMap.Strict as M
+import qualified DataStructs.HashMap as M
 import IR.Instruction (VarID)
 import IR.Function
 
@@ -14,7 +14,7 @@ import IR.Function
 -- to the functions themselves
 -- The entire program is again parametric in the register model
 newtype Program regModel = Program
-    { funcs :: M.Map FuncID (Function regModel)
+    { funcs :: M.HashMap FuncID (Function regModel)
     }
 
 -- Show instance for pretting printing entire programs

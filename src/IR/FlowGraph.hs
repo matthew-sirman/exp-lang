@@ -28,10 +28,15 @@ instance Show b => Show (NodeType b) where
     show Entry = "ENTRY"
     show Exit = "EXIT"
 
+instance Functor NodeType where
+    fmap f (BlockNode b) = BlockNode (f b)
+    fmap _ Entry = Entry
+    fmap _ Exit = Exit
+
 data Node b = Node
     { node :: NodeType b
-    , inEdges :: S.Set NodeID
-    , outEdges :: S.Set NodeID
+    , inEdges :: S.HashSet NodeID
+    , outEdges :: S.HashSet NodeID
     }
 
 instance Show b => Show (Node b) where
@@ -40,8 +45,11 @@ instance Show b => Show (Node b) where
             ++ "In edges: " ++ show (toList inEs) ++ "\n"
             ++ "Out edges: " ++ show (toList outEs) ++ "\n\n"
 
+instance Functor Node where
+    fmap f (Node n inEs outEs) = Node (f <$> n) inEs outEs
+
 data FlowGraph b = FlowGraph
-    { nodes :: M.Map NodeID (Node b)
+    { nodes :: M.HashMap NodeID (Node b)
     , entryID :: NodeID
     , exitID :: NodeID
     }
@@ -52,6 +60,9 @@ instance Show b => Show (FlowGraph b) where
             ++ "Entry: " ++ show en ++ "\n"
             ++ "Exit: " ++ show ex ++ "\n"
 
+instance Functor FlowGraph where
+    fmap f (FlowGraph ns en ex) = FlowGraph ((f <$>) <$> ns) en ex
+
 addIncomingEdge :: NodeID -> Node b -> Node b
 addIncomingEdge e n@(Node _ inEs _) = n { inEdges = S.insert e inEs }
 
@@ -60,7 +71,7 @@ createFlowGraph (IR.Function _ bs) = FlowGraph graph entryNodeID exitNodeID
     where
         -- Helper map from labels to node IDs
         -- This starts at 1 - the 0th node is the entry node
-        bNameMap :: M.Map IR.Label NodeID
+        bNameMap :: M.HashMap IR.Label NodeID
         bNameMap = M.fromList $ map (\(IR.BasicBlock lab _, i) -> (lab, i)) $ zip (toList bs) [1..]
 
         -- Entry node is always 0
@@ -83,7 +94,7 @@ createFlowGraph (IR.Function _ bs) = FlowGraph graph entryNodeID exitNodeID
             Just nid -> nid
             Nothing -> error $ "DEV ERROR: Flow graph creation failed to allocate label '" ++ lab ++ "'."
 
-        forwardEdgePass :: M.Map NodeID (Node (IR.BasicBlock r))
+        forwardEdgePass :: M.HashMap NodeID (Node (IR.BasicBlock r))
         forwardEdgePass = M.fromList $ (exitNodeID, exitNode) : foldl (flip combine) [(entryNodeID, entryNode)] bs
             where
                 -- Create the new block, and update the last block in the sequence
@@ -110,19 +121,19 @@ createFlowGraph (IR.Function _ bs) = FlowGraph graph entryNodeID exitNodeID
                 -- Otherwise, initialise both sets to empty
                 newNode bb _ = Node (BlockNode bb) S.empty S.empty
 
-        backwardEdgePass :: M.Map NodeID (Node (IR.BasicBlock r))
+        backwardEdgePass :: M.HashMap NodeID (Node (IR.BasicBlock r))
         -- Fold over the map - each element iterates over its outgoing node set, and
         -- for each node, adds its ID to their incoming node set
         backwardEdgePass = M.foldlWithKey linkEdges forwardEdgePass forwardEdgePass
             where
                 -- For a given node with ID "nid", loop over every outgoing edge, and
                 -- for each, add "nid" to its incoming edges
-                linkEdges :: M.Map NodeID (Node (IR.BasicBlock r)) -> NodeID -> Node (IR.BasicBlock r) 
-                          -> M.Map NodeID (Node (IR.BasicBlock r))
+                linkEdges :: M.HashMap NodeID (Node (IR.BasicBlock r)) -> NodeID -> Node (IR.BasicBlock r) 
+                          -> M.HashMap NodeID (Node (IR.BasicBlock r))
                 linkEdges acc nid (Node _ is os) = foldl addEdge acc os
                     where
                         addEdge acc to = M.adjust (addIncomingEdge nid) to acc
 
-        graph :: M.Map NodeID (Node (IR.BasicBlock r))
+        graph :: M.HashMap NodeID (Node (IR.BasicBlock r))
         graph = backwardEdgePass
 

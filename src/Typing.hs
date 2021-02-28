@@ -6,8 +6,8 @@ module Typing (
   , module Types
 ) where
 
-import qualified Data.HashMap.Strict as M
-import qualified Data.HashSet as S
+import qualified DataStructs.HashMap as M
+import qualified DataStructs.HashSet as S
 import Control.Monad.State
 import Control.Monad.Trans.Except
 import SyntaxTree
@@ -70,7 +70,7 @@ data Scheme = Scheme [PolyID] Type
 -- in some regard as "typed".
 class Typed a where
     -- Returns a set of free type variables from the given type
-    ftv :: a -> S.Set PolyID
+    ftv :: a -> S.HashSet PolyID
     -- Applies a type substitution to a typed entity. A substitution
     -- is defined as a finite mapping from polymorphic type names to
     -- concrete types
@@ -134,7 +134,7 @@ instance Typed Scheme where
 
 -- A type substitution, defined as a finite mapping from polymorphic
 -- type variables to concrete types
-type Substitution = M.Map PolyID Type
+type Substitution = M.HashMap PolyID Type
 
 -- The null substitution is just the empty map
 nullSub :: Substitution
@@ -151,7 +151,7 @@ composeSubs s1 s2 = M.map (apply s1) s2 `M.union` s1
 
 -- A type environment is just a finite mapping from symbols (i.e. builtins
 -- or bound user variables) to type schemes
-newtype TypeEnv = TypeEnv (M.Map Symbol Scheme)
+newtype TypeEnv = TypeEnv (M.HashMap Symbol Scheme)
 
 -- The default environment contains all the builtins mapped to their
 -- schemes

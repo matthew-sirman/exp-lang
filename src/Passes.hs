@@ -8,7 +8,7 @@ module Passes (
   , module Passes.BasicBlockTransforms
 ) where
 
-import qualified Data.Map as M
+import qualified DataStructs.HashMap as M
 import Data.Sequence as Seq
 import Data.Foldable (toList)
 import qualified IR

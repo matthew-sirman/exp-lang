@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveGeneric #-}
+
 module SyntaxTree (
     Identifier
   , Symbol(..)
@@ -8,6 +10,8 @@ module SyntaxTree (
   , module Builtin
 ) where
 
+import Data.Hashable (Hashable)
+import GHC.Generics (Generic)
 import qualified Parser as P
 import Builtin
 
@@ -19,7 +23,9 @@ type Identifier = String
 data Symbol
     = Identifier Identifier
     | Builtin Builtin
-    deriving (Ord, Eq)
+    deriving (Ord, Eq, Generic)
+
+instance Hashable Symbol
 
 -- Literals are either integers or booleans
 data Literal

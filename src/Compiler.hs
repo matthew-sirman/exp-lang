@@ -6,7 +6,7 @@ import SyntaxTree
 import Typing
 import qualified IR
 import Control.Monad.State
-import qualified Data.HashMap.Strict as M
+import qualified DataStructs.HashMap as M
 
 -- State uses while building a program's IR
 data ProgState = ProgState
@@ -20,7 +20,7 @@ data ProgState = ProgState
 
 -- The variable context holds a finite mapping between identifiers
 -- from the AST and variables in the IR
-type VarContext = M.Map Identifier (IR.Value IR.VarID)
+type VarContext = M.HashMap Identifier (IR.Value IR.VarID)
 
 -- The empty context, i.e. has no mapping
 emptyCtx :: VarContext

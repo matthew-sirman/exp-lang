@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveGeneric #-}
+
 module Builtin (
     BinOp(..)
   , CmpOp(..)
@@ -6,6 +8,8 @@ module Builtin (
   , builtinList
 ) where
 
+import GHC.Generics (Generic)
+import Data.Hashable (Hashable)
 import Types
 
 -- Data tag type for an arithmetic binary operator
@@ -15,7 +19,7 @@ data BinOp
     | Sub
     | Mul
     | Div
-    deriving (Ord, Eq)
+    deriving (Ord, Eq, Generic)
 
 -- Data tag type for a comparative binary operator
 -- of type int -> int -> bool
@@ -25,7 +29,7 @@ data CmpOp
     | GT_
     | LE_
     | GE_
-    deriving (Ord, Eq)
+    deriving (Ord, Eq, Generic)
 
 -- Data tag type for any builtin function
 -- Includes:
@@ -34,7 +38,7 @@ data CmpOp
 data Builtin
     = BinOp BinOp
     | CmpOp CmpOp
-    deriving (Ord, Eq)
+    deriving (Ord, Eq, Generic)
 
 -- Show instance for arithmetic binary operators
 instance Show BinOp where
@@ -42,6 +46,8 @@ instance Show BinOp where
     show Sub = "-"
     show Mul = "*"
     show Div = "/"
+
+instance Hashable BinOp
 
 -- Show instance for comparative binary operators
 instance Show CmpOp where
@@ -51,10 +57,14 @@ instance Show CmpOp where
     show LE_ = "<="
     show GE_ = ">="
 
+instance Hashable CmpOp
+
 -- Show instance for any builtin
 instance Show Builtin where
     show (BinOp b) = show b
     show (CmpOp c) = show c
+
+instance Hashable Builtin
 
 -- Return the functional type of a given binary operator
 builtinType :: Builtin -> Type
