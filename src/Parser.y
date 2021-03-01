@@ -17,6 +17,7 @@ import Data.Char
     bool    { TokenBool $$ }
     int     { TokenInt $$ }
     var     { TokenVar $$ }
+    '()'    { TokenUnit }
     '='     { TokenEq }
     '$'     { TokenLam }
     '->'    { TokenArrow }
@@ -31,6 +32,7 @@ import Data.Char
     '=='    { TokenEqEq }
     '('     { TokenOB }
     ')'     { TokenCB }
+    ','     { TokenComma }
 %%
 
 Exp 
@@ -59,9 +61,11 @@ Term
     | Factor                    { Factor $1 }
 
 Factor 
-    : int                       { Int $1 }
+    : '()'                      { Unit }
+    | int                       { Int $1 }
     | bool                      { Bool $1 }
     | var                       { Var $1 }
+    | '(' Exp ',' Exp ')'       { Pair $2 $4 }
     | '(' Exp ')'               { Nested $2 }
 
 {
@@ -100,9 +104,11 @@ data Term
     deriving Show
 
 data Factor
-    = Int Int
+    = Unit
+    | Int Int
     | Bool Bool
     | Var String
+    | Pair Exp Exp
     | Nested Exp
     deriving Show
 
@@ -115,6 +121,7 @@ data Token
     | TokenBool Bool
     | TokenInt Int
     | TokenVar String
+    | TokenUnit
     | TokenEq
     | TokenLam
     | TokenArrow
@@ -129,6 +136,7 @@ data Token
     | TokenDiv
     | TokenOB
     | TokenCB
+    | TokenComma
     deriving Show
 
 lexer :: String -> [Token]
@@ -137,6 +145,7 @@ lexer (c:cs)
     | isSpace c = lexer cs
     | isAlpha c = lexVar (c:cs)
     | isDigit c = lexNum (c:cs)
+lexer ('(':')':cs) = TokenUnit : lexer cs
 lexer ('=':'=':cs) = TokenEqEq : lexer cs
 lexer ('=':cs) = TokenEq : lexer cs
 lexer ('$':cs) = TokenLam : lexer cs
@@ -151,6 +160,7 @@ lexer ('<':cs) = TokenLT : lexer cs
 lexer ('>':cs) = TokenGT : lexer cs
 lexer ('(':cs) = TokenOB : lexer cs
 lexer (')':cs) = TokenCB : lexer cs
+lexer (',':cs) = TokenComma : lexer cs
 
 lexNum cs = TokenInt (read num) : lexer rest
     where (num, rest) = span isDigit cs
