@@ -1,7 +1,7 @@
 module IR.Program (
     Program(..)
   , progAddFunc
-  , allocateRegisters
+  -- , allocateRegisters
 ) where
 
 import qualified DataStructs.HashMap as M
@@ -31,6 +31,6 @@ progAddFunc f@(Function name _) (Program fs) = Program (M.insert name f fs)
 
 -- Register allocation is now just a specialisation of fmap
 -- due to abstracting over the register model
-allocateRegisters :: (VarID -> a) -> Program VarID -> Program a
-allocateRegisters = fmap
+-- allocateRegisters :: (VarID -> a) -> Program VarID -> Program a
+-- allocateRegisters = fmap
 
