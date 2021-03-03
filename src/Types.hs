@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveGeneric #-}
+
 module Types (
     PolyID
   , Type(..)
@@ -6,15 +8,21 @@ module Types (
   , polyName
 ) where
 
+import GHC.Generics (Generic)
+import Data.Hashable (Hashable)
+
 -- Polymorphic type disambiguation
 type PolyID = Int
 
 -- Types are built from this simple grammar
 data Type
-    = IntTy
+    = UnitTy
+    | IntTy
     | BoolTy
     | FuncTy Type Type
+    | PairTy Type Type
     | PolyTy PolyID
+    deriving (Eq, Generic)
     
 -- Helper function to return if a type is a boolean
 isBoolTy :: Type -> Bool
@@ -41,6 +49,7 @@ polyName = (polyNames !!)
 
 -- Show instance for pretting printing types
 instance Show Type where
+    show UnitTy = "unit"
     show IntTy = "int"
     show BoolTy = "bool"
     -- Function types are right associative, so if the left hand
@@ -51,5 +60,8 @@ instance Show Type where
             fromStr :: Type -> String
             fromStr f@(FuncTy _ _) = "(" ++ show f ++ ")"
             fromStr other = show other
+    show (PairTy l r) = "(" ++ show l ++ ", " ++ show r ++ ")"
     show (PolyTy i) = polyName i
+
+instance Hashable Type
 

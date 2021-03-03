@@ -67,7 +67,7 @@ addIncomingEdge :: NodeID -> Node b -> Node b
 addIncomingEdge e n@(Node _ inEs _) = n { inEdges = S.insert e inEs }
 
 createFlowGraph :: forall r. IR.Function r -> FlowGraph (IR.BasicBlock r)
-createFlowGraph (IR.Function _ bs) = FlowGraph graph entryNodeID exitNodeID
+createFlowGraph (IR.Function _ _ bs) = FlowGraph graph entryNodeID exitNodeID
     where
         -- Helper map from labels to node IDs
         -- This starts at 1 - the 0th node is the entry node

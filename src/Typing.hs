@@ -1,6 +1,5 @@
 module Typing (
     TypeError
-  , TExpr(..)
   , inferTypeTree
 
   , module Types
@@ -16,47 +15,49 @@ import Types
 -- Create an alias of string for a type error
 type TypeError = String
 
--- A typed expression is the same as the expression grammar
--- in SyntaxTree, only with type annotations on the variables
--- when they are scoped by a Let or Lambda expression.
-data TExpr
-    = TApp TExpr TExpr
-    | TLambda Type Identifier TExpr
-    | TLet Type Identifier TExpr TExpr
-    | TIfThenElse TExpr TExpr TExpr
-    | TLit Literal
-    | TVar Symbol
-
--- Helper to determine if an expression is an application
-isTApp :: TExpr -> Bool
-isTApp (TApp _ _) = True
-isTApp _ = False
-
--- Helper to determine if an expression is atomic
-isTAtom :: TExpr -> Bool
-isTAtom (TLit _) = True
-isTAtom (TVar _) = True
-isTAtom _ = False
-
--- Show instance for pretty printing typed expressions
-instance Show TExpr where
-    -- The same as in SyntaxTree - we make application
-    -- left associative and remove unnecessary parentheses
-    show (TApp e1 e2) = e1s ++ " " ++ e2s
-        where
-            e1s
-                | isTApp e1 || isTAtom e1 = show e1
-                | otherwise = "(" ++ show e1 ++ ")"
-            e2s
-                | isTAtom e2 = show e2
-                | otherwise = "(" ++ show e2 ++ ")"
-    -- Print the rest as expected, but add type annotations now to
-    -- lambdas and lets.
-    show (TLambda t name e) = "$(" ++ name ++ ": " ++ show t ++ ") -> " ++ show e
-    show (TLet t name e1 e2) = "let (" ++ name ++ ": " ++ show t ++ ") = " ++ show e1 ++ " in " ++ show e2
-    show (TIfThenElse p c a) = "if " ++ show p ++ " then " ++ show c ++ " else " ++ show a
-    show (TLit l) = show l
-    show (TVar n) = show n
+-- -- A typed expression is the same as the expression grammar
+-- -- in SyntaxTree, only with type annotations on the variables
+-- -- when they are scoped by a Let or Lambda expression.
+-- data TExpr
+--     = TApp TExpr TExpr
+--     | TLambda Type Identifier TExpr
+--     | TLet Type Identifier TExpr TExpr
+--     | TIfThenElse TExpr TExpr TExpr
+--     | TLit Literal
+--     | TPair TExpr TExpr
+--     | TVar Symbol
+-- 
+-- -- Helper to determine if an expression is an application
+-- isTApp :: TExpr -> Bool
+-- isTApp (TApp _ _) = True
+-- isTApp _ = False
+-- 
+-- -- Helper to determine if an expression is atomic
+-- isTAtom :: TExpr -> Bool
+-- isTAtom (TLit _) = True
+-- isTAtom (TVar _) = True
+-- isTAtom _ = False
+-- 
+-- -- Show instance for pretty printing typed expressions
+-- instance Show TExpr where
+--     -- The same as in SyntaxTree - we make application
+--     -- left associative and remove unnecessary parentheses
+--     show (TApp e1 e2) = e1s ++ " " ++ e2s
+--         where
+--             e1s
+--                 | isTApp e1 || isTAtom e1 = show e1
+--                 | otherwise = "(" ++ show e1 ++ ")"
+--             e2s
+--                 | isTAtom e2 = show e2
+--                 | otherwise = "(" ++ show e2 ++ ")"
+--     -- Print the rest as expected, but add type annotations now to
+--     -- lambdas and lets.
+--     show (TLambda t name e) = "$(" ++ name ++ ": " ++ show t ++ ") -> " ++ show e
+--     show (TLet t name e1 e2) = "let (" ++ name ++ ": " ++ show t ++ ") = " ++ show e1 ++ " in " ++ show e2
+--     show (TIfThenElse p c a) = "if " ++ show p ++ " then " ++ show c ++ " else " ++ show a
+--     show (TLit l) = show l
+--     show (TPair l r) = "(" ++ show l ++ ", " ++ show r ++ ")"
+--     show (TVar n) = show n
 
 -- The following is an implementation of Algorithm W for type inference
 -- and checking of the Hindley-Milner type system.
@@ -84,36 +85,46 @@ instance Typed a => Typed [a] where
     apply s = map (apply s)
 
 -- Prove a typed expression is typed
-instance Typed TExpr where
+instance Typed t => Typed (Expr t) where
     -- The free type variables are as expected - just collected
     -- from the type annotations in the tree
-    ftv (TApp e1 e2) = ftv e1 `S.union` ftv e2
-    ftv (TLambda t _ e) = ftv t `S.union` ftv e
-    ftv (TLet t _ e1 e2) = ftv t `S.union` ftv e1 `S.union` ftv e2
-    ftv (TIfThenElse p c a) = ftv p `S.union` ftv c `S.union` ftv a
-    ftv (TLit _) = S.empty
-    ftv (TVar _) = S.empty
+    -- Note: we only need to collect type variables from
+    -- lambda and let bindings - every other variable
+    -- references one of these.
+    -- Annotations on applications and vars are useful
+    -- later when it is hard to infer the type properly
+    ftv (App _ e1 e2) = ftv e1 `S.union` ftv e2
+    ftv (Lam t _ e) = ftv t `S.union` ftv e
+    ftv (Let t _ e1 e2) = ftv t `S.union` ftv e1 `S.union` ftv e2
+    ftv (IfThenElse p c a) = ftv p `S.union` ftv c `S.union` ftv a
+    ftv (Lit _) = S.empty
+    ftv (Pair l r) = ftv l `S.union` ftv r
+    ftv (Var _ _) = S.empty
 
     -- Application is also as expected - just applied to each
     -- type annotation in the tree
-    apply s (TApp e1 e2) = TApp (apply s e1) (apply s e2)
-    apply s (TLambda t n e) = TLambda (apply s t) n (apply s e)
-    apply s (TLet t n e1 e2) = TLet (apply s t) n (apply s e1) (apply s e2)
-    apply s (TIfThenElse p c a) = TIfThenElse (apply s p) (apply s c) (apply s a)
-    apply s l@(TLit _) = l
-    apply s v@(TVar _) = v
+    apply s (App t e1 e2) = App (apply s t) (apply s e1) (apply s e2)
+    apply s (Lam t n e) = Lam (apply s t) n (apply s e)
+    apply s (Let t n e1 e2) = Let (apply s t) n (apply s e1) (apply s e2)
+    apply s (IfThenElse p c a) = IfThenElse (apply s p) (apply s c) (apply s a)
+    apply s l@(Lit _) = l
+    apply s (Pair l r) = Pair (apply s l) (apply s r)
+    apply s (Var t n) = Var (apply s t) n
 
 -- Prove a type itself is typed
 instance Typed Type where
     -- The free type variables are collected as expected - collecting
     -- a set of all the PolyTy variables
+    ftv UnitTy = S.empty
     ftv IntTy = S.empty
     ftv BoolTy = S.empty
     ftv (FuncTy t1 t2) = ftv t1 `S.union` ftv t2
+    ftv (PairTy l r) = ftv l `S.union` ftv r
     ftv (PolyTy p) = S.singleton p
 
     -- Application of a substitution is also as expected
     apply s (FuncTy t1 t2) = FuncTy (apply s t1) (apply s t2)
+    apply s (PairTy l r) = PairTy (apply s l) (apply s r)
     -- This is the only interesting case here - if the polymorphic
     -- name is in the substitution, update the type variable
     -- Otherwise, leave it
@@ -200,14 +211,14 @@ type TI a = ExceptT TypeError (State InferState) a
 
 -- Main type inference algorithm. Takes an untyped expression and annotates
 -- each term, as well as returning the overall type of the program
-inferTypeTree :: Expr -> Either TypeError (TExpr, Type)
+inferTypeTree :: Expr () -> Either TypeError (Expr Type, Type)
 inferTypeTree expr = dropSubstitution <$> evalState (runExceptT (itt defaultEnv expr)) emptyState
     where
         dropSubstitution (_, te, t) = (te, t)
 
-        itt :: TypeEnv -> Expr -> TI (Substitution, TExpr, Type)
+        itt :: TypeEnv -> Expr () -> TI (Substitution, Expr Type, Type)
 
-        itt env (Application e0 e1) = do
+        itt env (App () e0 e1) = do
             -- Create a fresh polymorphic type variable
             t' <- newPolyTy
             -- Recurse on the function expression
@@ -224,34 +235,38 @@ inferTypeTree expr = dropSubstitution <$> evalState (runExceptT (itt defaultEnv 
 
             -- Return the type of S2 applied to p, and the substitution
             -- S2 . S1 . S0
-            pure (s2 `composeSubs` s1 `composeSubs` s0, apply s2 (TApp e0' e1'), apply s2 t')
+            let t = apply s2 t'
+            pure (s2 `composeSubs` s1 `composeSubs` s0, apply s2 (App t e0' e1'), t)
 
-        itt env (Lambda x e) = do
+        itt env (Lam () x e) = do
             -- Create a fresh polymorphic type variable
-            t <- newPolyTy
+            (t, env') <- patternTy x
             -- Recurse on the body, adding x : t to the env
-            (s, e', t') <- itt (updateEnv env t) e
+            (s, e', t') <- itt (updateEnv env env') e
             -- Return the type S applied to t -> t', and the substitution S
             let fty = apply s $ FuncTy t t'
             -- NOTE: I am not sure if it is necessary to apply s to e' here
-            pure (s, apply s (TLambda t x e'), fty)
+            pure (s, apply s (Lam t x e'), fty)
 
             where
-                updateEnv (TypeEnv env) t = TypeEnv $ M.insert (Identifier x) (Scheme [] t) env
+                updateEnv (TypeEnv env) (TypeEnv env') = TypeEnv $ env `M.union` env'
 
-        itt env (LetBinding x e0 e1) = do
+        itt env (Let () x e0 e1) = do
             -- Recurse on the binding
             (s0, e0', t) <- itt env e0
+            env' <- checkPattern (apply s0 env) x t
             -- Recurse on the body, adding x : gen(S0 env, t) to the context, and applying S0
-            (s1, e1', t') <- itt (updateEnv env s0 t) e1
+            (s1, e1', t') <- itt (updateEnv s0 env env') e1
             let s' = s1 `composeSubs` s0
-            pure (s', apply s' (TLet t x e0' e1'), t')
+            pure (s', apply s' (Let t x e0' e1'), t')
 
             where
-                -- First add gen(S0 env, t) to the context, then apply S0
-                updateEnv e@(TypeEnv env) s0 t = 
-                    apply s0 $ TypeEnv $ 
-                        M.insert (Identifier x) (generalise (apply s0 e) t) env
+                -- -- First add gen(S0 env, t) to the context, then apply S0
+                -- updateEnv e@(TypeEnv env) s0 t = 
+                --     apply s0 $ TypeEnv $ 
+                --         M.insert (Identifier x) (generalise (apply s0 e) t) env
+                updateEnv s0 (TypeEnv e1) (TypeEnv e2) =
+                    apply s0 $ TypeEnv (e1 `M.union` e2)
 
         itt env (IfThenElse p e0 e1) = do
             -- Type check the argument
@@ -266,25 +281,33 @@ inferTypeTree expr = dropSubstitution <$> evalState (runExceptT (itt defaultEnv 
 
             -- Check the result types can unify
             s <- mgu t0 t1
-            pure (s `composeSubs` s1 `composeSubs` s0 `composeSubs` sp, apply s (TIfThenElse p' e0' e1'), apply s t0)
+            pure (s `composeSubs` s1 `composeSubs` s0 `composeSubs` sp, apply s (IfThenElse p' e0' e1'), apply s t0)
 
         -- Outsource the literal case to avoid overly nested patterns
         itt env (Lit l) = ittLit l
 
+        itt env (Pair l r) = do
+            (sl, l', tl) <- itt env l
+            let env' = apply sl env
+            (sr, r', tr) <- itt env' r
+            let s = sr `composeSubs` sl
+            pure (s, apply s (Pair l' r'), PairTy (apply sr tl) tr)
+
         -- The variable case just looks up a variable and instantiates it
-        itt (TypeEnv env) (Var name) =
+        itt (TypeEnv env) (Var () name) =
             case M.lookup name env of
                 -- Check the variable is bound
                 Nothing -> throwE $ "Unbound variable '" ++ show name ++ "'."
                 Just sigma -> do
                     t <- instantiate sigma
-                    pure (nullSub, TVar name, t)
+                    pure (nullSub, Var t name, t)
 
         -- The literal case always succeeds and returns a type depending
         -- on the literal type
-        ittLit :: Literal -> TI (Substitution, TExpr, Type)
-        ittLit l = pure (nullSub, TLit l, t)
+        ittLit :: Literal -> TI (Substitution, Expr Type, Type)
+        ittLit l = pure (nullSub, Lit l, t)
             where
+                ty (UnitLit) = UnitTy
                 ty (IntLit _) = IntTy
                 ty (BoolLit _) = BoolTy
 
@@ -303,6 +326,53 @@ inferTypeTree expr = dropSubstitution <$> evalState (runExceptT (itt defaultEnv 
             -- Return the fresh polymorphic type
             pure $ PolyTy $ infSupply s
 
+        -- Helper function for creating a fresh most general type
+        -- for a pattern, and an environment update for this pattern
+        patternTy :: Pattern -> TI (Type, TypeEnv)
+        patternTy = patternTy' M.empty
+            where
+                patternTy' env (PVar name) = do
+                    -- If the name is already in the pattern env, throw an error
+                    if idName `M.member` env then
+                        throwE $ "Duplicate usage of identifier '" ++ name ++ "' in pattern."
+                    else do
+                        -- For a variable, create a fresh type and
+                        -- return it, along with the map from the identifier to
+                        -- the scheme containing just this type variable
+                        t <- newPolyTy
+                        pure (t, TypeEnv $ M.insert idName (Scheme [] t) env)
+                    where
+                        idName = Identifier name
+                patternTy' env (PPair l r) = do
+                    (tl, TypeEnv el) <- patternTy' env l
+                    (tr, env') <- patternTy' el r
+                    pure (PairTy tl tr, env')
+                patternTy' env (PLit l) = pure (lty l, TypeEnv env)
+                    where
+                        lty (UnitLit) = UnitTy
+                        lty (IntLit _) = IntTy
+                        lty (BoolLit _) = BoolTy
+
+        -- Helper function for checking a pattern matches a type, and then
+        -- creating a type substitution for this pattern
+        checkPattern :: TypeEnv -> Pattern -> Type -> TI TypeEnv
+        checkPattern = checkPattern' M.empty
+            where
+                checkPattern' env e (PVar name) t = 
+                    if idName `M.member` env then
+                        throwE $ "Duplicate usage of identifier '" ++ name ++ "' in pattern."
+                    else
+                        pure $ TypeEnv $ M.insert idName (generalise e t) env
+                    where
+                        idName = Identifier name
+                checkPattern' env e (PPair l r) (PairTy tl tr) = do
+                    (TypeEnv env') <- checkPattern' env e l tl
+                    checkPattern' env' e r tr
+                checkPattern' env _ (PLit (UnitLit)) UnitTy = pure $ TypeEnv env
+                checkPattern' env _ (PLit (IntLit _)) IntTy = pure $ TypeEnv env
+                checkPattern' env _ (PLit (BoolLit _)) BoolTy = pure $ TypeEnv env
+                checkPattern' _ _ p t = throwE $ "Could not unify pattern '" ++ show p ++ "' with type '" ++ show t ++ "'."
+
         -- Instantiate a scheme into a type by creating a fresh type variable
         -- for each type in the scheme, and updating the type with a substitution
         instantiate :: Scheme -> TI Type
@@ -317,11 +387,16 @@ inferTypeTree expr = dropSubstitution <$> evalState (runExceptT (itt defaultEnv 
         mgu :: Type -> Type -> TI Substitution
         mgu (PolyTy u) t = varBind u t
         mgu t (PolyTy u) = varBind u t
+        mgu BoolTy BoolTy = pure nullSub
         mgu IntTy IntTy = pure nullSub
         mgu BoolTy IntTy = pure nullSub
         mgu (FuncTy t0 t1) (FuncTy t0' t1') = do
             s0 <- mgu t0 t0'
             s1 <- mgu (apply s0 t1) (apply s0 t1')
+            pure $ s0 `composeSubs` s1
+        mgu (PairTy l r) (PairTy l' r') = do
+            s0 <- mgu l l'
+            s1 <- mgu (apply s0 r) (apply s0 r')
             pure $ s0 `composeSubs` s1
         -- The missing cases involve unifications like int with bool, which clearly
         -- fails. Unifiable types must have the same syntactic structure, or one
@@ -330,9 +405,12 @@ inferTypeTree expr = dropSubstitution <$> evalState (runExceptT (itt defaultEnv 
 
         -- Attempt to bind one poly type to another type
         varBind :: PolyID -> Type -> TI Substitution
-        -- If the other type is also a polymorphic type, no substitution
+        -- If the other type is the same polymorphic type, no substitution
         -- is needed
-        varBind u (PolyTy t) = pure nullSub
+        -- Otherwise, unify u -> t
+        varBind u t@(PolyTy u') 
+            | u == u' = pure nullSub
+            | otherwise = pure $ M.singleton u t
         -- Otherwise, if the poly type 'u' is free in t, there is an infinite
         -- type construction, something like a ~ a -> a
         -- This case fails the occur check.

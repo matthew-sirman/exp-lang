@@ -27,7 +27,7 @@ instance Functor Program where
 
 -- Helper function for adding a new function to the program
 progAddFunc :: Function r -> Program r -> Program r
-progAddFunc f@(Function name _) (Program fs) = Program (M.insert name f fs)
+progAddFunc f@(Function name _ _) (Program fs) = Program (M.insert name f fs)
 
 -- Register allocation is now just a specialisation of fmap
 -- due to abstracting over the register model

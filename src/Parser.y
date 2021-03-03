@@ -36,13 +36,13 @@ import Data.Char
 %%
 
 Exp 
-    : let var '=' Exp in Exp    { Let $2 $4 $6 }
+    : let Pat '=' Exp in Exp    { Let $2 $4 $6 }
     | Exp Exp1                  { Application $1 $2 }
     | Exp1                      { Exp1 $1 }
 
 Exp1
     : if Exp then Exp else Exp  { IfThenElse $2 $4 $6 }
-    | '$' var '->' Exp          { Lambda $2 $4 }
+    | '$' Pat '->' Exp          { Lambda $2 $4 }
     | AExp                      { ArithExp $1 }
 
 AExp 
@@ -68,6 +68,14 @@ Factor
     | '(' Exp ',' Exp ')'       { Pair $2 $4 }
     | '(' Exp ')'               { Nested $2 }
 
+Pat
+    : var                       { PVar $1 }
+    | '(' Pat ',' Pat ')'       { PPair $2 $4 }
+    | '()'                      { PUnit }
+    | int                       { PInt $1 }
+    | bool                      { PBool $1 }
+    | '(' Pat ')'               { PNest $2 }
+
 {
 parseError :: [Token] -> a
 parseError _ = error "Parse error"
@@ -75,14 +83,14 @@ parseError _ = error "Parse error"
 type Identifier = String
 
 data Exp
-    = Let Identifier Exp Exp
+    = Let Pat Exp Exp
     | Application Exp Exp1
     | Exp1 Exp1
     deriving Show
 
 data Exp1
     = IfThenElse Exp Exp Exp
-    | Lambda Identifier Exp
+    | Lambda Pat Exp
     | ArithExp AExp
     deriving Show
 
@@ -110,6 +118,15 @@ data Factor
     | Var String
     | Pair Exp Exp
     | Nested Exp
+    deriving Show
+
+data Pat
+    = PVar Identifier 
+    | PPair Pat Pat 
+    | PUnit 
+    | PInt Int 
+    | PBool Bool
+    | PNest Pat
     deriving Show
 
 data Token
