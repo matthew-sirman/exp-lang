@@ -125,6 +125,8 @@ data Instruction r
     | Jump Label                        -- unconditional branch to label
     | Phi r (PhiNode r) (PhiNode r)     -- coalesces two values into a register based on branches
     | Ret (Value r)                     -- returns a value from a function
+    | Push (Value r)                    -- push a value onto the stack
+    | Pop r                             -- pop the top of the stack into r
     deriving (Ord, Eq)
 
 -- Show instance for the instructions for pretty printing
@@ -153,6 +155,9 @@ instance Show r => Show (Instruction r) where
     show (Phi v p1 p2) = show v ++ " = phi [" ++ showPhiNode p1 ++ ", " ++ showPhiNode p2 ++ "]"
     show (Ret v) = "ret " ++ show v
 
+    show (Push v) = "push " ++ show v
+    show (Pop r) = "pop " ++ show r
+
 -- Functor proof for instructions
 instance Functor Instruction where
     fmap f (Add v l r)                  = Add (f v) (f <$> l) (f <$> r)
@@ -173,4 +178,6 @@ instance Functor Instruction where
     fmap f (Jump l)                     = Jump l
     fmap f (Phi v (vl, ll) (vr, lr))    = Phi (f v) (f <$> vl, ll) (f <$> vr, lr)
     fmap f (Ret v)                      = Ret (f <$> v)
+    fmap f (Push v)                     = Push (f <$> v)
+    fmap f (Pop r)                      = Pop (f r)
  

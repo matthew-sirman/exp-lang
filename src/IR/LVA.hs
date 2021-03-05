@@ -81,6 +81,8 @@ ref (IR.Branch v _)     = valRef v
 ref (IR.Jump _)         = S.empty
 ref (IR.Phi _ (vl, _) (vr, _)) = valRef vl `S.union` valRef vr
 ref (IR.Ret v)          = valRef v
+ref (IR.Push v)         = valRef v
+ref (IR.Pop _)          = S.empty
 
 -- Helper for getting the reference set from a value
 valRef :: (Eq r, M.Hashable r) => IR.Value r -> S.HashSet r
@@ -108,6 +110,8 @@ def (IR.Branch _ _)     = S.empty
 def (IR.Jump _)         = S.empty
 def (IR.Phi v _ _)      = S.singleton v
 def (IR.Ret _)          = S.empty
+def (IR.Push _)         = S.empty
+def (IR.Pop v)          = S.singleton v
 
 findBBLiveVars :: forall r. (Ord r, Eq r, M.Hashable r) 
                => S.HashSet r -> IR.BasicBlock r -> LVABasicBlock r

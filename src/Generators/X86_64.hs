@@ -52,6 +52,12 @@ regAllocOrder =
     , RAX
     ]
 
+callerSaved :: S.HashSet Register
+callerSaved = S.fromList [R10, R11]
+
+calleeSaved :: S.HashSet Register
+calleeSaved = S.fromList [R12, R13, R14, R15, RBX]
+
 instance Hashable Register
 
 data Immediate
@@ -80,6 +86,8 @@ data Instruction
     | JmpE Label
     | Jmp Label
     | Ret
+    | Push Value
+    | Pop Register
 
 data Region = Region
     { label :: Label
@@ -220,11 +228,65 @@ createX86IRBB (IR.BasicBlock name is) = IR.BasicBlock name x86is
 createX86IRFunc :: IR.Function IR.VarID -> IR.Function X86IRReg
 createX86IRFunc (IR.Function name as bs) = IR.Function name as (createX86IRBB <$> bs)
 
+allocateWithSaves :: (X86IRReg -> Register)
+                  -> IR.NodeIDMap 
+                  -> IR.FlowGraph (IR.LVABasicBlock X86IRReg)
+                  -> S.HashSet X86IRReg
+                  -> IR.Function X86IRReg
+                  -> IR.Function Register
+allocateWithSaves allocator nodeIDMap liveVars allVars (IR.Function name as bs) = IR.Function name as newBs
+    where
+        newBs :: Seq (IR.BasicBlock Register)
+        newBs = entryBlock :<| (addCallerSaves <$> bs)
+
+        -- Get the set of all registers used in this function which need to be saved
+        -- and convert to an ordered list (the ordering is irrelevant, however)
+        saveVars :: [Register]
+        saveVars = S.toList $ S.map allocator allVars `S.intersection` calleeSaved
+
+        entryBlock :: IR.BasicBlock Register
+        entryBlock = IR.BasicBlock (name ++ "_entry") (is saveVars)
+            where
+                is :: [Register] -> Seq (IR.Instruction Register)
+                is [] = Seq.Empty
+                is (r:rs) = (IR.Push (IR.Variable r)) :<| is rs
+
+        addCallerSaves :: IR.BasicBlock X86IRReg -> IR.BasicBlock Register
+        addCallerSaves (IR.BasicBlock lab is) = IR.BasicBlock lab (alloc $ Seq.zip is blockLVs)
+            where
+                blockLVs :: Seq (S.HashSet X86IRReg)
+                blockLVs = IR.liveVars $ blockUnwrap $ M.lookup nID (IR.nodes liveVars)
+                    where
+                        nID = fromJust $ M.lookup lab nodeIDMap
+                        blockUnwrap :: Maybe (IR.Node r) -> r
+                        blockUnwrap (Just (IR.Node (IR.BlockNode b) _ _)) = b
+                
+                alloc :: Seq (IR.Instruction X86IRReg, S.HashSet X86IRReg) -> Seq (IR.Instruction Register)
+                alloc Seq.Empty = Seq.Empty
+                alloc ((i@(IR.Call _ _ _), lvs) :<| rest) = 
+                    addPushes clashLVs ((allocator <$> i) :<| addPops clashLVs (alloc rest))
+                    where
+                        clashLVs = S.toList $ (S.map allocator lvs) `S.intersection` callerSaved
+                alloc ((i@(IR.Ret _), _) :<| rest) = addPops saveVars ((allocator <$> i) :<| alloc rest)
+                alloc ((i, _) :<| rest) = (allocator <$> i) :<| alloc rest
+
+                -- Add pops and pushes in reverse orders
+                addPushes :: [Register] -> Seq (IR.Instruction Register) -> Seq (IR.Instruction Register)
+                addPushes [] acc = acc
+                addPushes (r:rs) acc = (IR.Push (IR.Variable r)) :<| addPushes rs acc
+
+                addPops :: [Register] -> Seq (IR.Instruction Register) -> Seq (IR.Instruction Register)
+                addPops [] acc = acc
+                addPops (r:rs) acc = addPops rs ((IR.Pop r) :<| acc)
+
+                iAlloc :: IR.Instruction X86IRReg -> IR.Instruction Register
+                iAlloc = fmap allocator
+
 allocateRegisters :: IR.Program IR.VarID -> IR.Program Register
 allocateRegisters (IR.Program fs) = IR.Program $ fAlloc <$> fs
     where
         fAlloc :: IR.Function IR.VarID -> IR.Function Register
-        fAlloc func = applyAlloc <$> x86func
+        fAlloc func = allocateWithSaves applyAlloc nodeIDMap liveVars allVars x86func
             where
                 applyAlloc :: X86IRReg -> Register
                 applyAlloc (ConcreteReg r) = r
@@ -244,10 +306,14 @@ allocateRegisters (IR.Program fs) = IR.Program $ fAlloc <$> fs
                 x86func = createX86IRFunc func
 
                 flowGraph :: IR.FlowGraph (IR.BasicBlock X86IRReg)
-                flowGraph = IR.createFlowGraph x86func
+                nodeIDMap :: IR.NodeIDMap
+                (flowGraph, nodeIDMap) = IR.createFlowGraph x86func
 
                 liveVars :: IR.FlowGraph (IR.LVABasicBlock X86IRReg)
                 (_, liveVars) = IR.findLiveVarsDAG flowGraph
+
+                allVars :: S.HashSet X86IRReg
+                allVars = IR.findAllVars x86func
 
                 clashGraph :: IR.ClashGraph X86IRReg
                 clashGraph = IR.ClashGraph $ M.unionWith const graph emptyClashes
@@ -256,7 +322,7 @@ allocateRegisters (IR.Program fs) = IR.Program $ fAlloc <$> fs
                         -- Create the clash graph
                         (IR.ClashGraph graph) = IR.createClashGraph liveVars
                         -- Create an empty clash graph to fill in missing variables
-                        emptyClashes = M.fromList $ map (\v -> (v, S.empty)) $ S.toList $ IR.findAllVars x86func
+                        emptyClashes = M.fromList $ map (\v -> (v, S.empty)) $ S.toList allVars
 
                 prefGraph :: IR.PreferenceGraph X86IRReg
                 prefGraph = IR.createPrefGraph flowGraph
@@ -446,6 +512,12 @@ generateX86 prog = X86_64Code text blocks
             emit rest
         emit ((IR.Ret _) :<| rest) =
             (Ret) :<|
+            emit rest
+        emit ((IR.Push v) :<| rest) = 
+            (Push (valEmit v)) :<|
+            emit rest
+        emit ((IR.Pop r) :<| rest) =
+            (Pop r) :<|
             emit rest
 
         -- TODO: Implement the rest of the code generators

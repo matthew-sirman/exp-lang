@@ -5,6 +5,7 @@ module IR.FlowGraph (
   , NodeType(..)
   , Node(..)
   , FlowGraph(..)
+  , NodeIDMap
   , createFlowGraph
 ) where
 
@@ -54,6 +55,8 @@ data FlowGraph b = FlowGraph
     , exitID :: NodeID
     }
 
+type NodeIDMap = M.HashMap IR.Label NodeID
+
 instance Show b => Show (FlowGraph b) where
     show (FlowGraph nodes en ex) =
         concat (map show $ M.elems nodes) ++ "\n\n"
@@ -66,12 +69,12 @@ instance Functor FlowGraph where
 addIncomingEdge :: NodeID -> Node b -> Node b
 addIncomingEdge e n@(Node _ inEs _) = n { inEdges = S.insert e inEs }
 
-createFlowGraph :: forall r. IR.Function r -> FlowGraph (IR.BasicBlock r)
-createFlowGraph (IR.Function _ _ bs) = FlowGraph graph entryNodeID exitNodeID
+createFlowGraph :: forall r. IR.Function r -> (FlowGraph (IR.BasicBlock r), NodeIDMap)
+createFlowGraph (IR.Function _ _ bs) = (FlowGraph graph entryNodeID exitNodeID, bNameMap)
     where
         -- Helper map from labels to node IDs
         -- This starts at 1 - the 0th node is the entry node
-        bNameMap :: M.HashMap IR.Label NodeID
+        bNameMap :: NodeIDMap
         bNameMap = M.fromList $ map (\(IR.BasicBlock lab _, i) -> (lab, i)) $ zip (toList bs) [1..]
 
         -- Entry node is always 0
