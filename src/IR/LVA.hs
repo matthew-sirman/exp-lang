@@ -5,6 +5,7 @@ module IR.LVA (
   , ClashGraph(..)
   , PreferenceGraph(..)
   , findLiveVarsDAG
+  , findAllVars
   , createClashGraph
   , createPrefGraph
 ) where
@@ -60,6 +61,54 @@ reverseFoldl :: (b -> a -> b) -> b -> Seq a -> b
 reverseFoldl f e Seq.Empty = e
 reverseFoldl f e (xs :|> x) = reverseFoldl f (f e x) xs
 
+-- Ref - the set of all variables referenced by this instruction
+ref :: (Eq r, M.Hashable r) => IR.Instruction r -> S.HashSet r
+ref (IR.Add _ vl vr)    = valRef vl `S.union` valRef vr
+ref (IR.Sub _ vl vr)    = valRef vl `S.union` valRef vr
+ref (IR.Mul _ vl vr)    = valRef vl `S.union` valRef vr
+ref (IR.Div _ vl vr)    = valRef vl `S.union` valRef vr
+ref (IR.EQ _ vl vr)     = valRef vl `S.union` valRef vr
+ref (IR.LT _ vl vr)     = valRef vl `S.union` valRef vr
+ref (IR.GT _ vl vr)     = valRef vl `S.union` valRef vr
+ref (IR.LE _ vl vr)     = valRef vl `S.union` valRef vr
+ref (IR.GE _ vl vr)     = valRef vl `S.union` valRef vr
+ref (IR.Move _ v)       = valRef v
+ref (IR.Write v r _)    = valRef v `S.union` valRef r
+ref (IR.Read _ v _)     = valRef v
+ref (IR.MAlloc _ _)     = S.empty
+ref (IR.Call _ _ vas)   = (S.unions $ map valRef vas)
+ref (IR.Branch v _)     = valRef v
+ref (IR.Jump _)         = S.empty
+ref (IR.Phi _ (vl, _) (vr, _)) = valRef vl `S.union` valRef vr
+ref (IR.Ret v)          = valRef v
+
+-- Helper for getting the reference set from a value
+valRef :: (Eq r, M.Hashable r) => IR.Value r -> S.HashSet r
+valRef (IR.Variable v) = S.singleton v
+valRef (IR.Closure (IR.FClosure _ (Just v))) = S.singleton v
+valRef _ = S.empty
+
+-- Def - the set of all variables defined by this instruction
+def :: (Eq r, M.Hashable r) => IR.Instruction r -> S.HashSet r
+def (IR.Add v _ _)      = S.singleton v
+def (IR.Sub v _ _)      = S.singleton v
+def (IR.Mul v _ _)      = S.singleton v
+def (IR.Div v _ _)      = S.singleton v
+def (IR.EQ v _ _)       = S.singleton v
+def (IR.LT v _ _)       = S.singleton v
+def (IR.GT v _ _)       = S.singleton v
+def (IR.LE v _ _)       = S.singleton v
+def (IR.GE v _ _)       = S.singleton v
+def (IR.Move v _)       = S.singleton v
+def (IR.Write _ _ _)    = S.empty
+def (IR.Read v _ _)     = S.singleton v
+def (IR.MAlloc v _)     = S.singleton v
+def (IR.Call v _ _)     = S.singleton v
+def (IR.Branch _ _)     = S.empty
+def (IR.Jump _)         = S.empty
+def (IR.Phi v _ _)      = S.singleton v
+def (IR.Ret _)          = S.empty
+
 findBBLiveVars :: forall r. (Ord r, Eq r, M.Hashable r) 
                => S.HashSet r -> IR.BasicBlock r -> LVABasicBlock r
 findBBLiveVars varsAfter (IR.BasicBlock l is) = LVABasicBlock l lvs
@@ -76,47 +125,6 @@ findBBLiveVars varsAfter (IR.BasicBlock l is) = LVABasicBlock l lvs
         -- with any variable referenced here.
         combine :: Seq (S.HashSet r) -> IR.Instruction r -> Seq (S.HashSet r)
         combine (l :<| ls) i = ((l S.\\ def i) `S.union` ref i) :<| (l :<| ls)
-
-        -- Ref - the set of all variables referenced by this instruction
-        ref :: IR.Instruction r -> S.HashSet r
-        ref (IR.Add _ vl vr) = valRef vl `S.union` valRef vr
-        ref (IR.Sub _ vl vr) = valRef vl `S.union` valRef vr
-        ref (IR.Mul _ vl vr) = valRef vl `S.union` valRef vr
-        ref (IR.Div _ vl vr) = valRef vl `S.union` valRef vr
-        ref (IR.EQ _ vl vr) = valRef vl `S.union` valRef vr
-        ref (IR.LT _ vl vr) = valRef vl `S.union` valRef vr
-        ref (IR.GT _ vl vr) = valRef vl `S.union` valRef vr
-        ref (IR.LE _ vl vr) = valRef vl `S.union` valRef vr
-        ref (IR.GE _ vl vr) = valRef vl `S.union` valRef vr
-        ref (IR.Move _ v) = valRef v
-        ref (IR.Call _ _ vas) = (S.unions $ map valRef vas)
-        ref (IR.Branch v _) = valRef v
-        ref (IR.Jump _) = S.empty
-        ref (IR.Phi _ (vl, _) (vr, _)) = valRef vl `S.union` valRef vr
-        ref (IR.Ret v) = valRef v
-
-        -- Helper for getting the reference set from a value
-        valRef :: IR.Value r -> S.HashSet r
-        valRef (IR.Variable v) = S.singleton v
-        valRef _ = S.empty
-
-        -- Def - the set of all variables defined by this instruction
-        def :: IR.Instruction r -> S.HashSet r
-        def (IR.Add v _ _) = S.singleton v
-        def (IR.Sub v _ _) = S.singleton v
-        def (IR.Mul v _ _) = S.singleton v
-        def (IR.Div v _ _) = S.singleton v
-        def (IR.EQ v _ _) = S.singleton v
-        def (IR.LT v _ _) = S.singleton v
-        def (IR.GT v _ _) = S.singleton v
-        def (IR.LE v _ _) = S.singleton v
-        def (IR.GE v _ _) = S.singleton v
-        def (IR.Move v _) = S.singleton v
-        def (IR.Call v _ _) = S.singleton v
-        def (IR.Branch _ _) = S.empty
-        def (IR.Jump _) = S.empty
-        def (IR.Phi v _ _) = S.singleton v
-        def (IR.Ret _) = S.empty
 
 -- The state keeps a memoised map from nodes to their before-LV set, and
 -- the current map from nodes to LVA basic blocks
@@ -181,14 +189,23 @@ findLiveVarsDAG (IR.FlowGraph nodes entry exit) = (fvs, IR.FlowGraph lvGraph ent
                         update (memMap, graph) = (M.insert nid predSet memMap, M.insert nid newNode graph)
                         newNode = IR.Node (IR.BlockNode newBB) is os
 
-createClashGraph :: forall r. (Eq r, M.Hashable r) => IR.FlowGraph (LVABasicBlock r) -> ClashGraph r
-createClashGraph graph = ClashGraph $ M.unionsWith S.union $ map findBBClashes $ M.elems (IR.nodes graph)
+findAllVars :: forall r. (Ord r, Eq r, M.Hashable r) => IR.Function r -> S.HashSet r
+findAllVars (IR.Function _ _ bs) = S.unions $ toList $ findVars <$> bs
     where
+        findVars :: IR.BasicBlock r -> S.HashSet r
+        findVars (IR.BasicBlock _ is) = scanIs S.empty is
 
-        findBBClashes :: IR.Node (LVABasicBlock r) -> Graph r
-        -- Entry and exit nodes have no instructions, thus no clashes
-        findBBClashes (IR.Node IR.Entry _ _) = M.empty
-        findBBClashes (IR.Node IR.Exit _ _) = M.empty
+        scanIs :: S.HashSet r -> Seq (IR.Instruction r) -> S.HashSet r
+        scanIs acc Seq.Empty = acc
+        scanIs acc (i :<| is) = scanIs (acc `S.union` def i) is
+
+createClashGraph :: forall r. (Eq r, M.Hashable r) => IR.FlowGraph (LVABasicBlock r) -> ClashGraph r
+createClashGraph graph = ClashGraph $ M.unionsWith S.union $ map findBBClashes $ M.elems (IR.nodes graph) 
+    where 
+        findBBClashes :: IR.Node (LVABasicBlock r) -> Graph r 
+        -- Entry and exit nodes have no instructions, thus no clashes 
+        findBBClashes (IR.Node IR.Entry _ _) = M.empty 
+        findBBClashes (IR.Node IR.Exit _ _) = M.empty 
         -- Block nodes: for each instruction, add the clash set, and fold these into one map
         findBBClashes (IR.Node (IR.BlockNode (LVABasicBlock _ lvSets)) _ _) = foldl addClashes M.empty lvSets
 

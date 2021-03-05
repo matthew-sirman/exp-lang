@@ -152,7 +152,7 @@ compile = mkProgram . reconstructBuiltins
                 finalise :: State ProgState (IR.Program IR.VarID)
                 finalise = do
                     -- Make the main function
-                    mkNamedFunc "main" 0
+                    mkNamedFunc "emain" 0
                     -- Add the entry block
                     mkNewBlock
                     -- Compile the program - this will return a value
@@ -325,7 +325,7 @@ compile = mkProgram . reconstructBuiltins
                     -- Create a new var for the closure
                     closure <- mkNewVar
                     -- Allocate the right amount of heap memory
-                    addInstruction $ IR.MAlloc closure totalSize
+                    addInstruction $ IR.MAlloc closure (IR.Immediate $ IR.Int64 totalSize)
                     writeClosure fvs (IR.Variable closure)
 
                     -- Return the closure
@@ -441,6 +441,7 @@ compile = mkProgram . reconstructBuiltins
         -- Generate a literal value as an immediate
         codegen ctx (Lit l) = pure $ IR.Immediate $ imm l
             where
+                imm (ST.UnitLit) = IR.Unit
                 imm (ST.IntLit i) = IR.Int64 i
                 imm (ST.BoolLit b) = IR.Bool b
 
@@ -452,7 +453,7 @@ compile = mkProgram . reconstructBuiltins
             rval <- codegen ctx r
             -- Allocate an appropriate amount of heap memory
             pair <- mkNewVar
-            addInstruction $ IR.MAlloc pair (lSize + rSize)
+            addInstruction $ IR.MAlloc pair (IR.Immediate $ IR.Int64 (lSize + rSize))
             -- Get a pointer to the second element on the heap
             addr2 <- mkNewVar
             addInstruction $ IR.Add addr2 (IR.Variable pair) (IR.Immediate $ IR.Int64 lSize)

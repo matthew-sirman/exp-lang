@@ -11,6 +11,8 @@ import qualified DataStructs.HashMap as M
 import Data.Sequence as Seq
 import qualified IR
 
+import Debug.Trace
+
 type Label = String
 
 data Register
@@ -28,7 +30,9 @@ data Register
     | RSI       -- Used for second arg
     | RDI       -- Used for first arg
     | RAX       -- Used for return
-    deriving (Ord, Eq, Show, Generic)
+    deriving (Ord, Eq, Generic)
+
+-- Maybe there is a nicer way of doing this?
 
 regAllocOrder :: [Register]
 regAllocOrder =
@@ -61,38 +65,45 @@ data Instruction
     = Add Value Register
     | Sub Value Register
     | Mul Register
+    | CQTO
     | Div Register
+    | Cmp Value Value
+    | SetEQ Register
+    | SetLT Register
+    | SetGT Register
+    | SetLE Register
+    | SetGE Register
     | Mov Value Register
+    | Write Value Register
+    | Read Register Register
     | Call Label
+    | JmpE Label
+    | Jmp Label
     | Ret
-    deriving Show
 
 data Region = Region
     { label :: Label
     , instructions :: Seq Instruction
     }
-    deriving Show
 
 data TextSection = TextSection
     { globals :: [Label]
     , externs :: [Label]
     }
-    deriving Show
 
 data X86_64Code = X86_64Code
     { textSection :: TextSection
     , regions :: Seq Region
     }
-    deriving Show
 
 data X86IRReg
     = VirtualReg IR.VarID
     | ConcreteReg Register
     deriving (Ord, Eq, Generic)
 
-instance Show X86IRReg where
-    show (VirtualReg vid) = show vid
-    show (ConcreteReg reg) = "%" ++ show reg
+-- instance Show X86IRReg where
+--     show (VirtualReg vid) = show vid
+--     show (ConcreteReg reg) = "%" ++ show reg
 
 instance Hashable X86IRReg
 
@@ -102,8 +113,13 @@ createX86IRBB (IR.BasicBlock name is) = IR.BasicBlock name x86is
         x86is :: Seq (IR.Instruction X86IRReg)
         x86is = x86 is
 
-        translate :: Functor f => f IR.VarID -> f X86IRReg
-        translate = (VirtualReg <$>)
+        translate :: IR.Value IR.VarID -> IR.Value X86IRReg
+        translate (IR.Immediate imm) = IR.Immediate imm
+        translate (IR.Variable v) = IR.Variable (VirtualReg v)
+        translate (IR.Closure cl) = IR.Closure (VirtualReg <$> cl)
+        -- TODO: Add rest
+        translate (IR.Argument 0) = IR.Variable rdi
+        translate (IR.Argument 1) = IR.Variable rsi
 
         x86 :: Seq (IR.Instruction IR.VarID) -> Seq (IR.Instruction X86IRReg)
         x86 ((IR.Add res l r) :<| rest) =
@@ -119,41 +135,90 @@ createX86IRBB (IR.BasicBlock name is) = IR.BasicBlock name x86is
         -- x86 multiply uses rax as one operand always
         x86 ((IR.Mul res l r) :<| rest) =
             (IR.Move rax (translate l)) :<|                     -- mov lhs -> rax
-            (IR.Mul rax (IR.Variable rax) (translate r)) :<|    -- rax := rax * rhs
-            (IR.Move (VirtualReg res) (IR.Variable rax)) :<|    -- mov rax -> res
+            (IR.Move res' (translate r)) :<|                    -- mov rhs -> res
+            (IR.Mul rax (IR.Variable rax) (IR.Variable res')) :<| -- rax := rax * rhs
+            (IR.Move res' (IR.Variable rax)) :<|                -- mov rax -> res
             x86 rest
+            where res' = VirtualReg res
         -- x86 division uses rax as left operand always
         x86 ((IR.Div res l r) :<| rest) =
             (IR.Move rax (translate l)) :<|                     -- mov lhs -> rax
-            (IR.Div rax (IR.Variable rax) (translate r)) :<|    -- rax := rax / rhs
-            (IR.Move (VirtualReg res) (IR.Variable rax)) :<|    -- mov rax -> res
+            (IR.Move res' (translate r)) :<|                    -- mov rhs -> res
+            (IR.Div rax (IR.Variable rax) (IR.Variable res')) :<| -- rax := rax / rhs
+            (IR.Move res' (IR.Variable rax)) :<|                -- mov rax -> res
+            x86 rest
+            where res' = VirtualReg res
+        x86 ((IR.EQ res l r) :<| rest) =
+            (IR.EQ (VirtualReg res) (translate l) (translate r)) :<|
+            x86 rest
+        x86 ((IR.LT res l r) :<| rest) =
+            (IR.LT (VirtualReg res) (translate l) (translate r)) :<|
+            x86 rest
+        x86 ((IR.GT res l r) :<| rest) =
+            (IR.GT (VirtualReg res) (translate l) (translate r)) :<|
+            x86 rest
+        x86 ((IR.LE res l r) :<| rest) =
+            (IR.LE (VirtualReg res) (translate l) (translate r)) :<|
+            x86 rest
+        x86 ((IR.GE res l r) :<| rest) =
+            (IR.GE (VirtualReg res) (translate l) (translate r)) :<|
+            x86 rest
+        x86 ((IR.Move res v) :<| rest) =
+            (IR.Move (VirtualReg res) (translate v)) :<|
+            x86 rest
+        x86 ((IR.Write from to size) :<| rest) =
+            (IR.Write (translate from) (translate to) size) :<|
+            x86 rest
+        x86 ((IR.Read res a size) :<| rest) =
+            (IR.Read (VirtualReg res) (translate a) size) :<|
+            x86 rest
+        x86 ((IR.MAlloc res v) :<| rest) =
+            (IR.Move rdi (translate v)) :<|
+            (IR.Call rax "malloc" [IR.Variable rdi]) :<|
+            (IR.Move (VirtualReg res) (IR.Variable rax)) :<|
             x86 rest
         -- x86 calling convention - first argument should be in
         -- rdi, result returned always in rax
-        x86 ((IR.Call res fun arg) :<| rest) =
+        -- TODO: Add PROPER support for multiple args!
+        x86 ((IR.Call res fun [arg]) :<| rest) =
             (IR.Move rdi (translate arg)) :<|                   -- mov arg -> rdi
-            (IR.Call rax (translate fun) (IR.Variable rdi)) :<| -- call <fun>
+            (IR.Call rax fun [IR.Variable rdi]) :<|             -- call <fun>
             (IR.Move (VirtualReg res) (IR.Variable rax)) :<|    -- mov rax -> res
+            x86 rest
+        x86 ((IR.Call res fun [arg1, arg2]) :<| rest) =
+            (IR.Move rdi (translate arg1)) :<|                  -- mov arg -> rdi
+            (IR.Move rsi (translate arg1)) :<|                  -- mov arg -> rsi
+            (IR.Call rax fun [IR.Variable rdi, IR.Variable rsi]) :<| 
+            (IR.Move (VirtualReg res) (IR.Variable rax)) :<|    -- mov rax -> res
+            x86 rest
+        x86 ((IR.Branch val lab) :<| rest) =
+            (IR.Branch (translate val) lab) :<|
+            x86 rest
+        x86 ((IR.Jump lab) :<| rest) =
+            (IR.Jump lab) :<|
+            x86 rest
+        -- TODO: Jump into other blocks and add Move instructions?
+        x86 ((IR.Phi res (vl, ll) (vr, lr)) :<| rest) =
+            (IR.Phi (VirtualReg res) (translate vl, ll) (translate vr, lr)) :<|
             x86 rest
         x86 ((IR.Ret res) :<| rest) =
             (IR.Move rax (translate res)) :<|                   -- mov res -> rax
             (IR.Ret (IR.Variable rax)) :<|                      -- ret
             x86 rest
 
-        -- TODO: Conditionals
-
         -- Default case: Instructions which don't have 
         -- any special requirements are just mapped to use
         -- virtual registers
-        x86 (i :<| rest) = translate i :<| x86 rest
+        x86 (i :<| rest) = (VirtualReg <$> i) :<| x86 rest
         x86 Seq.Empty = Seq.Empty
 
-        rax, rdi :: X86IRReg
+        rax, rdi, rsi :: X86IRReg
         rax = ConcreteReg RAX
         rdi = ConcreteReg RDI
+        rsi = ConcreteReg RSI
 
 createX86IRFunc :: IR.Function IR.VarID -> IR.Function X86IRReg
-createX86IRFunc (IR.Function name bs) = IR.Function name (createX86IRBB <$> bs)
+createX86IRFunc (IR.Function name as bs) = IR.Function name as (createX86IRBB <$> bs)
 
 allocateRegisters :: IR.Program IR.VarID -> IR.Program Register
 allocateRegisters (IR.Program fs) = IR.Program $ fAlloc <$> fs
@@ -166,12 +231,15 @@ allocateRegisters (IR.Program fs) = IR.Program $ fAlloc <$> fs
                 applyAlloc (VirtualReg v) = 
                     case M.lookup v vmap of
                         Just r -> r
-                        Nothing -> error "ERROR!"
+                        Nothing -> error $ "Register allocation failed for: " ++ show v
                     
-                    where
-                        vstack = evalState createStack clashGraph
-                        vmap = allocator vstack
+                vstack :: [IR.VarID]
+                vstack = evalState createStack clashGraph
 
+                vmap :: M.HashMap IR.VarID Register
+                vmap = allocator vstack
+
+                -- Clash and preference graph creation
                 x86func :: IR.Function X86IRReg
                 x86func = createX86IRFunc func
 
@@ -182,7 +250,13 @@ allocateRegisters (IR.Program fs) = IR.Program $ fAlloc <$> fs
                 (_, liveVars) = IR.findLiveVarsDAG flowGraph
 
                 clashGraph :: IR.ClashGraph X86IRReg
-                clashGraph = IR.createClashGraph liveVars
+                clashGraph = IR.ClashGraph $ M.unionWith const graph emptyClashes
+                    where
+                        -- This is kind of ugly...
+                        -- Create the clash graph
+                        (IR.ClashGraph graph) = IR.createClashGraph liveVars
+                        -- Create an empty clash graph to fill in missing variables
+                        emptyClashes = M.fromList $ map (\v -> (v, S.empty)) $ S.toList $ IR.findAllVars x86func
 
                 prefGraph :: IR.PreferenceGraph X86IRReg
                 prefGraph = IR.createPrefGraph flowGraph
@@ -276,7 +350,7 @@ allocateRegisters (IR.Program fs) = IR.Program $ fAlloc <$> fs
                                 checkClash Nothing _ = Nothing
                                 checkClash reg@(Just r) (ConcreteReg r')
                                     | r == r' = Nothing
-                                    | otherwise = reg
+                                    | otherwise = reg 
                                 checkClash reg@(Just r) (VirtualReg v) = 
                                     case M.lookup v acc of
                                         Nothing -> reg
@@ -296,38 +370,86 @@ generateX86 prog = X86_64Code text blocks
         x86prog = allocateRegisters prog
 
         text :: TextSection
-        text = TextSection [] (map IR.fid $ M.elems $ IR.funcs x86prog)
+        text = TextSection (map IR.fid $ M.elems $ IR.funcs x86prog) ["malloc"]
 
         blocks :: Seq Region
         blocks = foldl (><) Seq.Empty $ map emitFunc $ M.elems $ IR.funcs x86prog
 
         emitFunc :: IR.Function Register -> Seq Region
-        emitFunc (IR.Function name bs) = (Region name Seq.Empty) :<| (mapBlock <$> bs)
+        emitFunc (IR.Function name _ bs) = (Region name Seq.Empty) :<| (mapBlock <$> bs)
 
         mapBlock :: IR.BasicBlock Register -> Region
         mapBlock (IR.BasicBlock lab is) = Region lab $ emit is
 
-        emit ((IR.Move dst (IR.Variable src)) :<| rest)
-            | src == dst = emit rest                -- skip over redundant moves
-            | otherwise = Mov src dst :<| emit rest
-        emit ((IR.Add res _ (IR.Variable r)) :<| rest) =
-            (Add r res) :<|
+        valEmit :: IR.Value Register -> Value
+        valEmit (IR.Immediate (IR.Int64 i)) = Immediate $ I64 i
+        valEmit (IR.Immediate (IR.Bool True)) = Immediate $ I64 1
+        valEmit (IR.Immediate (IR.Bool False)) = Immediate $ I64 0
+        valEmit (IR.Variable reg) = Register reg
+        -- TODO: Fix closures
+        -- valEmit (IR.Closure
+
+        emit :: Seq (IR.Instruction Register) -> Seq Instruction
+        emit ((IR.Add res _ r) :<| rest) =
+            (Add (valEmit r) res) :<|
             emit rest
-        emit ((IR.Sub res _ (IR.Variable r)) :<| rest) =
-            (Sub r res) :<|
+        emit ((IR.Sub res _ r) :<| rest) =
+            (Sub (valEmit r) res) :<|
             emit rest
         emit ((IR.Mul _ _ (IR.Variable r)) :<| rest) =
             (Mul r) :<|
             emit rest
         emit ((IR.Div _ _ (IR.Variable r)) :<| rest) =
+            (CQTO) :<|
             (Div r) :<|
+            emit rest
+        emit ((IR.EQ res l r) :<| rest) =
+            (Cmp (valEmit l) (valEmit r)) :<|
+            (SetEQ res) :<|
+            emit rest
+        emit ((IR.LT res l r) :<| rest) =
+            (Cmp (valEmit l) (valEmit r)) :<|
+            (SetLT res) :<|
+            emit rest
+        emit ((IR.GT res l r) :<| rest) =
+            (Cmp (valEmit l) (valEmit r)) :<|
+            (SetGT res) :<|
+            emit rest
+        emit ((IR.LE res l r) :<| rest) =
+            (Cmp (valEmit l) (valEmit r)) :<|
+            (SetLE res) :<|
+            emit rest
+        emit ((IR.GE res l r) :<| rest) =
+            (Cmp (valEmit l) (valEmit r)) :<|
+            (SetGE res) :<|
+            emit rest
+        emit ((IR.Move dst (IR.Variable src)) :<| rest)
+            | src == dst = emit rest                -- skip over redundant moves
+        emit ((IR.Move dst src) :<| rest) = 
+            Mov (valEmit src) dst :<| 
+            emit rest
+        emit ((IR.Write v (IR.Variable r) _) :<| rest) =
+            (Write (valEmit v) r) :<|
+            emit rest
+        emit ((IR.Read res (IR.Variable v) _) :<| rest) =
+            (Read v res) :<|
+            emit rest
+        emit ((IR.Call _ name _) :<| rest) =
+            (Call name) :<|
+            emit rest
+        emit ((IR.Branch val lab) :<| rest) = 
+            (Cmp (Immediate $ I64 0) (valEmit val)) :<|
+            (JmpE lab) :<|
+            emit rest
+        emit ((IR.Jump lab) :<| rest) =
+            (Jmp lab) :<|
             emit rest
         emit ((IR.Ret _) :<| rest) =
             (Ret) :<|
             emit rest
 
         -- TODO: Implement the rest of the code generators
-        emit (i :<| _) = error $ "NOT IMPLEMENTED YET! " ++ show i
+        emit (i :<| _) = error $ "NOT IMPLEMENTED YET! "
 
         emit Seq.Empty = Seq.Empty
             

@@ -102,6 +102,8 @@ instance Functor Value where
     fmap f (Closure c) = Closure (f <$> c)
     fmap _ (Argument a) = Argument a
 
+-- TODO: Consider making this a GADT
+
 -- Instruction type in the IR. This is also parametric in the
 -- register model
 data Instruction r
@@ -117,7 +119,7 @@ data Instruction r
     | Move r (Value r)                  -- move a value into the register
     | Write (Value r) (Value r) Int     -- write a value (left) out into memory address (right)
     | Read r (Value r) Int              -- read a value into a register
-    | MAlloc r Int                      -- allocate a region of memory
+    | MAlloc r (Value r)                -- allocate a region of memory
     | Call r FuncID [Value r]           -- calls a function with some values, and assigns to register
     | Branch (Value r) Label            -- conditional branch to label on value
     | Jump Label                        -- unconditional branch to label
@@ -141,7 +143,7 @@ instance Show r => Show (Instruction r) where
     show (Move v e) = "mov " ++ show v ++ ", " ++ show e
     show (Write v a i) = "wr " ++ show i ++ " " ++ show v ++ ", (" ++ show a ++ ")"
     show (Read r v i) = "rd " ++ show i ++ " " ++ show r ++ " <- (" ++ show v ++ ")"
-    show (MAlloc v i) = show v ++ " = malloc " ++ show i
+    show (MAlloc r v) = show r ++ " = malloc " ++ show v
     show (Call v f args) = show v ++ " = call " ++ showFunc f ++ "(" ++ as ++ ")"
         where
             as = concat $ intersperse ", " $ map show args
@@ -165,7 +167,7 @@ instance Functor Instruction where
     fmap f (Move v e)                   = Move (f v) (f <$> e)
     fmap f (Write v a i)                = Write (f <$> v) (f <$> a) i
     fmap f (Read r v i)                 = Read (f r) (f <$> v) i
-    fmap f (MAlloc v i)                 = MAlloc (f v) i
+    fmap f (MAlloc r v)                 = MAlloc (f r) (f <$> v)
     fmap f (Call v cf a)                = Call (f v) cf ((f <$>) <$> a)
     fmap f (Branch v l)                 = Branch (f <$> v) l
     fmap f (Jump l)                     = Jump l

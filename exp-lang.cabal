@@ -18,12 +18,33 @@ extra-source-files:  CHANGELOG.md
 
 executable exp-lang
   main-is:             Main.hs
-  other-modules:       Compiler
-                     , X86
-                     , X86Printer
+  other-modules:       Asm.X86_64Printer
+                     , Builtin
+                     , Compiler
+                     , DataStructs.HashMap
+                     , DataStructs.HashSet
+                     , Generators.X86_64
+                     , IR
+                     , IR.BasicBlock
+                     , IR.FlowGraph
+                     , IR.Function
+                     , IR.Instruction
+                     , IR.LVA
+                     , IR.Program
+                     , Parser
+                     , SyntaxTree
+                     , Types
+                     , Typing
   -- other-extensions:
   ghc-options:         -dynamic -Wall
   build-depends:       base >=4.14 && <4.15
                      , array
+                     , hashable
+                     , containers
+                     , unordered-containers
+                     , mtl
+                     , transformers
+                     , filepath
+                     , process
   hs-source-dirs:      src
   default-language:    Haskell2010

@@ -273,7 +273,7 @@ inferTypeTree expr = dropSubstitution <$> evalState (runExceptT (itt defaultEnv 
             (sp, p', tp) <- itt env p
             if not $ isBoolTy tp then
                 throwE $ "Expected type 'bool' as predicate for if then else. Found '" ++ show tp ++ "'."
-            else do
+            else pure ()
             let env' = apply sp env
             (s0, e0', t0) <- itt env' e0
             let env'' = apply s0 env'
