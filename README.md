@@ -27,17 +27,17 @@ where "x" is a pattern and "e" is the function body (i.e. equivalent to λx. e w
 
 ## Patterns
 There are three forms of patterns.
-# Literal Patterns
+### Literal Patterns
 ```
 1, 2, True, False, () etc
 ```
 Literal patterns can be in the form of any literal in the language.
-# Variable patterns
+### Variable patterns
 ```
 x, y
 ```
 Variable patterns are in the form of an identifier
-# Pair patterns
+### Pair patterns
 ```
 (p1, p2)
 ```
@@ -51,4 +51,8 @@ These behave as expected, and are infix operators.
 Variables are referenced by their identifier name, which must be in scope at the time of use
 
 ## Literals
-There are integer literals, which are just written as numbers (e.g. `5`), and boolean literals which are either `True` or `False`.
+Integer literals, which are just written as numbers (e.g. `5`)
+
+Boolean literals which are either `True` or `False`.
+
+Unit literal, which is just (); represents a singleton set
