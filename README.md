@@ -55,4 +55,4 @@ Integer literals, which are just written as numbers (e.g. `5`)
 
 Boolean literals which are either `True` or `False`.
 
-Unit literal, which is just (); represents a singleton set
+Unit literal, which is just `()`; represents a singleton set
