@@ -82,6 +82,8 @@ reconstructBuiltins = reconstruct
         reconstruct (ST.Var _ (ST.Builtin i)) = error $ "DEV: Failed to reconstruct binary operator '" ++ show i ++ "'."
 
 -- Helper function to find the size of a type
+intSize = 8
+ptrSize = 8
 sizeof :: Type -> Int
 sizeof = sizeof'
     where
@@ -91,9 +93,6 @@ sizeof = sizeof'
         sizeof' (PairTy _ _) = ptrSize
         sizeof' (FuncTy _ _) = ptrSize
         sizeof' (PolyTy _) = ptrSize
-
-        intSize = 8
-        ptrSize = 8
 
 -- This is safe only because we have already type checked
 -- The extra type information that wasn't strictly necessary, but
@@ -152,7 +151,7 @@ compile = mkProgram . reconstructBuiltins
                 finalise :: State ProgState (IR.Program IR.VarID)
                 finalise = do
                     -- Make the main function
-                    mkNamedFunc "emain" 0
+                    mkNamedFunc "emain" []
                     -- Add the entry block
                     mkNewBlock
                     -- Compile the program - this will return a value
@@ -184,14 +183,15 @@ compile = mkProgram . reconstructBuiltins
         codegen ctx (App _ f a) = do
             -- Generate the function itself
             -- Note we have already typechecked, so this
-            -- should always return a function
+            -- should always return a function - either in a closure
+            -- or in a variable
             fval <- codegen ctx f
             -- Generate the argument value
             arg <- codegen ctx a
             -- Create a new variable to assign this call to
             call <- mkNewVar
             -- Apply the function to the argument
-            addInstruction $ IR.Call call (fName fval) (argList fval arg)
+            addInstruction $ IR.Call call fval (argList fval arg)
             -- Return the result of this call
             cr <- gets $ callReturn call fval
             pure cr
@@ -204,10 +204,12 @@ compile = mkProgram . reconstructBuiltins
                 -- need a single argument
                 argList (IR.Closure (IR.FClosure _ Nothing)) arg = [arg]
                 -- Otherwise, attach the closure as the SECOND argument
-                argList f@(IR.Closure (IR.FClosure _ (Just c))) arg = [arg, IR.Variable c]
-
-                fName :: IR.Value IR.VarID -> IR.FuncID
-                fName (IR.Closure (IR.FClosure f _)) = f
+                argList (IR.Closure (IR.FClosure _ (Just c))) arg = [arg, IR.Variable c]
+                -- If the function is a variable, it is an "unknown" closure, i.e. stored
+                -- in a register - we do not have access to a label
+                -- In this case, the value is the closure itself, so we just pass it to the
+                -- call
+                argList f@(IR.Variable _) arg = [arg, f]
 
                 callReturn :: IR.VarID -> IR.Value IR.VarID -> ProgState -> IR.Value IR.VarID
                 callReturn callVar (IR.Closure (IR.FClosure f _)) p =
@@ -227,20 +229,35 @@ compile = mkProgram . reconstructBuiltins
                         -- the closure is now stored. This is because we know calling the function
                         -- returned a closure, and "callVar" is the value we save the return in.
                         Just cl -> IR.Closure (const callVar <$> cl)
+                -- If the function was called from an unknown closure, just return the
+                -- callVar in a variable - we don't know if the function was higher order
+                -- (or more precisely, we don't know which function it returned)
+                callReturn callVar _ _ = IR.Variable callVar
 
         -- Generate a lambda abstraction
         codegen ctx lam@(Lam t pattern body) = do
             -- Create a new function in the program with one argument if
             -- there are no free variables, or 2 if there are (the second
             -- being for the closure)
-            mkNewFunc (if requiresClosure then 2 else 1)
+            arg0 <- mkNewVar
+            argC <- condMkClosureArg
+            mkNewFunc $ vars arg0 argC
             -- Get a reference to the top function
             ref <- funcRef
             -- Create an entry block for this function
             mkNewBlock
-            bodyCtx <- unpackPattern ctx pattern t (IR.Argument 0)
+            arg0Var <- mkNewVar
+            -- Copy the argument into a fresh variable - this
+            -- helps with nested function calls
+            -- Note that ideally, we will try to optimise this move
+            -- out
+            addInstruction $ IR.Move arg0Var (IR.Variable arg0)
+            -- Do the same for the closure variable, if needed
+            argCVar <- condMoveClosureVar argC
+
+            bodyCtx <- unpackPattern ctx pattern t (IR.Variable arg0Var)
             -- Unpack the closure if necessary
-            bodyCtx' <- unpackClosure (IR.Argument 1) bodyCtx
+            bodyCtx' <- unpackClosure bodyCtx argCVar
             -- Generate the body with the new names bound
             rval <- codegen bodyCtx' body
             -- Add the return instruction for the value
@@ -259,10 +276,23 @@ compile = mkProgram . reconstructBuiltins
             modify $ addHigherOrder rval ref
 
             -- Make a closure if necessary, otherwise return Nothing
-            cl <- mkClosure
+            cl <- mkClosure ref
             pure $ IR.Closure (IR.FClosure ref cl)
 
             where
+                -- Make a second argument, only if a closure is required
+                condMkClosureArg :: State ProgState (Maybe IR.VarID)
+                condMkClosureArg
+                    | requiresClosure = Just <$> mkNewVar
+                    | otherwise = pure Nothing
+
+                condMoveClosureVar :: Maybe IR.VarID -> State ProgState (Maybe IR.VarID)
+                condMoveClosureVar Nothing = pure Nothing
+                condMoveClosureVar (Just v) = do
+                    fresh <- mkNewVar
+                    addInstruction $ IR.Move fresh (IR.Variable v)
+                    pure $ Just fresh
+
                 addHigherOrder :: IR.Value IR.VarID -> IR.FuncID -> ProgState -> ProgState
                 -- If the return value of the body was a closure, add an entry
                 addHigherOrder (IR.Closure cl) f p = p { hofMap = M.insert f cl (hofMap p) }
@@ -277,16 +307,25 @@ compile = mkProgram . reconstructBuiltins
                     [] -> False
                     _ -> True
 
+                vars :: IR.VarID -> Maybe IR.VarID -> [IR.VarID]
+                vars a0 (Just a1) = [a0, a1]
+                vars a0 Nothing = [a0]
+
                 -- CLOSURE MEMORY LAYOUT
-                -- We will make a closure of n items where each item
+                -- We will make a closure of n items where first, the function
+                -- call address is placed, then subsequently each item
                 -- is layed out sequentially in memory. The ordering is arbitrary
                 -- but fixed by the "fvs" calculation (above). Item 0 will have
-                -- an offset of 0 from the closure pointer
+                -- an offset of PTR_SIZE from the closure pointer
+                -- The pointer will have offset 0
 
-                unpackClosure :: IR.Value IR.VarID -> VarContext -> State ProgState VarContext
-                unpackClosure ptr
-                    | requiresClosure = unpackClosure' fvs ptr
-                    | otherwise = pure
+                unpackClosure :: VarContext -> Maybe IR.VarID -> State ProgState VarContext
+                unpackClosure ctx Nothing = pure ctx
+                unpackClosure ctx (Just ptr) = do
+                    -- Skip over the function pointer part of the closure
+                    ptr' <- mkNewVar
+                    addInstruction $ IR.Add ptr' (IR.Variable ptr) (IR.Immediate $ IR.Int64 ptrSize)
+                    unpackClosure' fvs (IR.Variable ptr') ctx
         
                 -- Helper to unpack a closure and update the variable context
                 -- This should only be called when there are more than one free variables
@@ -313,26 +352,33 @@ compile = mkProgram . reconstructBuiltins
                         sz = sizeof t
 
                 -- Make a closure object on the heap
-                mkClosure :: State ProgState (Maybe IR.VarID)
-                mkClosure
-                    | requiresClosure = Just <$> mkClosure'
+                mkClosure :: IR.FuncID -> State ProgState (Maybe IR.VarID)
+                mkClosure ref
+                    | requiresClosure = Just <$> mkClosure' ref
                     | otherwise = pure Nothing
 
                 -- Helper to make a closure. This should only be called
                 -- if a closure is needed.
-                mkClosure' :: State ProgState IR.VarID
-                mkClosure' = do
+                mkClosure' :: IR.FuncID -> State ProgState IR.VarID
+                mkClosure' ref = do
                     -- Create a new var for the closure
                     closure <- mkNewVar
                     -- Allocate the right amount of heap memory
                     addInstruction $ IR.MAlloc closure (IR.Immediate $ IR.Int64 totalSize)
-                    writeClosure fvs (IR.Variable closure)
+                    -- Write the address
+                    addInstruction $ IR.Write (IR.Closure (IR.FClosure ref Nothing)) (IR.Variable closure) ptrSize
+                    -- Increment the pointer
+                    body <- mkNewVar
+                    addInstruction $ IR.Add body (IR.Variable closure) (IR.Immediate $ IR.Int64 ptrSize)
+                    writeClosure fvs (IR.Variable body)
 
                     -- Return the closure
                     pure closure
                     
                     where
-                        totalSize = sum $ map (sizeof . snd) fvs
+                        -- Total closure size is the size of the pointer, plus the total
+                        -- size of all the saved arguments
+                        totalSize = ptrSize + sum (map (sizeof . snd) fvs)
 
                         writeClosure :: [(ST.Identifier, Type)] -> IR.Value IR.VarID -> State ProgState ()
                         writeClosure ((i, t):[]) ptr = do
@@ -494,7 +540,7 @@ compile = mkProgram . reconstructBuiltins
                     }
 
         -- Create a new function with an arbitrary name and push it onto the stack
-        mkNamedFunc :: IR.FuncID -> Int -> State ProgState ()
+        mkNamedFunc :: IR.FuncID -> [IR.VarID] -> State ProgState ()
         mkNamedFunc name as = do
             modify addFunc
             where
@@ -505,7 +551,7 @@ compile = mkProgram . reconstructBuiltins
                     }
 
         -- Create a new function and push it onto the stack
-        mkNewFunc :: Int -> State ProgState ()
+        mkNewFunc :: [IR.VarID] -> State ProgState ()
         mkNewFunc as = do
             modify addFunc
             where

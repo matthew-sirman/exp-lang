@@ -84,7 +84,7 @@ data Value r
     = Immediate Immediate
     | Variable r
     | Closure (Closure r)
-    | Argument Index
+    -- | Argument Index
     deriving (Ord, Eq)
 
 -- Show instance for IR values to help with pretty printing
@@ -92,7 +92,7 @@ instance Show r => Show (Value r) where
     show (Immediate imm) = show imm
     show (Variable v) = show v
     show (Closure c) = show c
-    show (Argument i) = "a" ++ show i
+    -- show (Argument i) = "a" ++ show i
 
 -- Functor proof for values - the parametric register
 -- type can be updated
@@ -100,7 +100,7 @@ instance Functor Value where
     fmap _ (Immediate imm) = Immediate imm
     fmap f (Variable v) = Variable (f v)
     fmap f (Closure c) = Closure (f <$> c)
-    fmap _ (Argument a) = Argument a
+    -- fmap _ (Argument a) = Argument a
 
 -- TODO: Consider making this a GADT
 
@@ -120,7 +120,7 @@ data Instruction r
     | Write (Value r) (Value r) Int     -- write a value (left) out into memory address (right)
     | Read r (Value r) Int              -- read a value into a register
     | MAlloc r (Value r)                -- allocate a region of memory
-    | Call r FuncID [Value r]           -- calls a function with some values, and assigns to register
+    | Call r (Value r) [Value r]        -- calls a function with some values, and assigns to register
     | Branch (Value r) Label            -- conditional branch to label on value
     | Jump Label                        -- unconditional branch to label
     | Phi r (PhiNode r) (PhiNode r)     -- coalesces two values into a register based on branches
@@ -146,7 +146,7 @@ instance Show r => Show (Instruction r) where
     show (Write v a i) = "wr " ++ show i ++ " " ++ show v ++ ", (" ++ show a ++ ")"
     show (Read r v i) = "rd " ++ show i ++ " " ++ show r ++ " <- (" ++ show v ++ ")"
     show (MAlloc r v) = show r ++ " = malloc " ++ show v
-    show (Call v f args) = show v ++ " = call " ++ showFunc f ++ "(" ++ as ++ ")"
+    show (Call v f args) = show v ++ " = call " ++ show f ++ "(" ++ as ++ ")"
         where
             as = concat $ intersperse ", " $ map show args
     show (Branch v lab) = "br " ++ show v ++ ", " ++ showLabel lab
@@ -173,7 +173,7 @@ instance Functor Instruction where
     fmap f (Write v a i)                = Write (f <$> v) (f <$> a) i
     fmap f (Read r v i)                 = Read (f r) (f <$> v) i
     fmap f (MAlloc r v)                 = MAlloc (f r) (f <$> v)
-    fmap f (Call v cf a)                = Call (f v) cf ((f <$>) <$> a)
+    fmap f (Call v cf a)                = Call (f v) (f <$> cf) ((f <$>) <$> a)
     fmap f (Branch v l)                 = Branch (f <$> v) l
     fmap f (Jump l)                     = Jump l
     fmap f (Phi v (vl, ll) (vr, lr))    = Phi (f v) (f <$> vl, ll) (f <$> vr, lr)

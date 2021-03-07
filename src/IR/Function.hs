@@ -23,7 +23,7 @@ showFunc f = f
 -- to the end is O(1)
 data Function r = Function
     { fid :: FuncID
-    , args :: Int
+    , args :: [r]
     , blocks :: Seq (BasicBlock r)
     }
 
@@ -32,15 +32,15 @@ instance Show r => Show (Function r) where
     show (Function f as bs) = showFunc f ++ "(" ++ argList ++ ") {\n" ++ concatMap show bs ++ "}\n\n"
         where
             argList :: String
-            argList = concat $ L.intersperse ", " $ map (show . (Argument :: Int -> Value r)) [0..(as-1)]
+            argList = concat $ L.intersperse ", " $ map show as
 
 -- Functor proof for functions
 instance Functor Function where
-    fmap f (Function name as bs) = Function name as ((f <$>) <$> bs)
+    fmap f (Function name as bs) = Function name (f <$> as) ((f <$>) <$> bs)
 
 -- Helper function for making an empty IR function. The
 -- basic block sequence is again empty
-mkFunc :: FuncID -> Int -> Function r
+mkFunc :: FuncID -> [r] -> Function r
 mkFunc nm as = Function nm as Seq.empty
 
 -- Helper function for adding a basic block to the end of a function
