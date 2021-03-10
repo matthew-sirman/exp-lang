@@ -15,7 +15,16 @@ The syntax for a let expression is as follows:
 ```
 let x = e1 in e2
 ```
-where "x" is a pattern, "e1" is the bound expression, and "e2" is the used expression
+where "x" is a pattern, "e1" is the bound expression, and "e2" is the rest of the expression.
+
+Note that "x" may NOT appear in e1.
+
+## Let Rec expressions
+Let expressions which allow for a recursive binding. Here, the name may be used in its binding.
+```
+let rec x = e1 in e2
+```
+where "x" is an identifier - general patterns are not allowed here. "e1" is again the bound expression, but "x" may appear in it. "e2" as before.
 
 ## Lambda expressions
 Lambda expressions create a lambda abstraction with a named identifier.
