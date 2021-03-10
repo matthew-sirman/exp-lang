@@ -399,21 +399,51 @@ compile = mkProgram . reconstructBuiltins
 
         -- Generate a let binding
         codegen ctx recs (Let t pattern body use) = do
+            -- If this is a primitive binding of just a name to a function
+            -- then we can add a user friendly name to the top of the name
+            -- stack. Otherwise, do nothing
+            boundName <- condBindDirectName pattern
             -- Generate the body of the let
             -- Bind the given name to this body
             var <- codegen ctx recs body
-            -- var <- codegen (bindRecs pattern) body
+            -- If we added a direct name, but the function did not use it, remove
+            -- it from the stack
+            condUnbindDirectName boundName
+            -- Create a new context for the body with the added variables
             useCtx <- unpackPattern ctx pattern t var
             -- Generate the rest of the expression
             codegen useCtx recs use
+            where
+                condBindDirectName :: ST.Pattern -> State ProgState (Maybe ST.Identifier)
+                -- If the pattern is just a variable, then add it as the next function name
+                -- on the stack
+                condBindDirectName (ST.PVar name) = do
+                    name' <- uniqueName name
+                    addNextFuncName name'
+                    pure $ Just name'
+                -- Otherwise, do nothing
+                condBindDirectName _ = pure Nothing
+
+                condUnbindDirectName :: Maybe ST.Identifier -> State ProgState ()
+                -- If we did bind a name on the top of the stack, pop it if we didn't
+                -- use it
+                condUnbindDirectName (Just name) = condFuncNamePop name
+                -- Otherwise, again do nothing
+                condUnbindDirectName Nothing = pure ()
 
         codegen ctx recs (LetRec t name body use) = do
-            addNextFuncName name
-            var <- codegen ctx (S.insert name recs) body
-            condFuncNamePop name
+            name' <- uniqueName name
+            -- Set the next function's name to the name of this binding
+            addNextFuncName name'
+            -- Generate the variable, adding this function to the recursive
+            -- binding set
+            var <- codegen ctx (S.insert name' recs) body
+            -- Conditionally pop the top function name, in the case that the
+            -- recursive binding didn't actually define a function
+            condFuncNamePop name'
+            -- Generate the rest of the expression - note we bind to the original name;
+            -- we now want to shadow any functions that had this name before
             codegen (M.insert name var ctx) recs use
-            -- where
-            --     ctx' = M.insert name (IR.Closure (IR.FClosure name Nothing)) ctx
 
         -- Generate an if then else
         codegen ctx recs (IfThenElse pred cons alt) = do
@@ -583,6 +613,25 @@ compile = mkProgram . reconstructBuiltins
                 condPop ps@(ProgState _ _ _ _ (n:fs) _ _)
                     | n /= name = ps
                     | otherwise = ps { funcNames = fs }
+
+        -- Helper to ensure the name is unique, so we don't get labels of
+        -- the same name in the code!
+        uniqueName :: ST.Identifier -> State ProgState ST.Identifier
+        uniqueName name = do
+            usedNames <- gets $ M.keysSet . IR.funcs . prog
+            pure $ fresh usedNames
+            where
+                fresh used = 
+                    if name `S.member` used then
+                        findFreshName 0
+                    else
+                        name
+                    where
+                        findFreshName n
+                            | nn `S.member` used = findFreshName (n + 1)
+                            | otherwise = nn
+                            where
+                                nn = name ++ show n
 
         -- Create a new temporary variable. The initial register model
         -- allows us to create an unbounded number of these. We also
