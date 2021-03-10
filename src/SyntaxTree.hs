@@ -44,6 +44,7 @@ data Expr t
     = App t (Expr t) (Expr t)
     | Lam t Pattern (Expr t)
     | Let t Pattern (Expr t) (Expr t)
+    | LetRec t Identifier (Expr t) (Expr t)
     | IfThenElse (Expr t) (Expr t) (Expr t)
     | Lit Literal
     | Pair (Expr t) (Expr t)
@@ -96,6 +97,7 @@ instance Show t => Show (Expr t) where
     -- The other terms are as expected
     show (Lam t pat e) = "$(" ++ show pat ++ ": " ++ show t ++ ") -> " ++ show e
     show (Let t pat e1 e2) = "let (" ++ show pat ++ ": " ++ show t ++ ") = " ++ show e1 ++ " in " ++ show e2
+    show (LetRec t var e1 e2) = "let rec (" ++ var ++ ": " ++ show t ++ ") = " ++ show e1 ++ " in " ++ show e2
     show (IfThenElse p c a) = "if " ++ show p ++ " then " ++ show c ++ " else " ++ show a
     show (Lit l) = show l
     show (Pair l r) = "(" ++ show l ++ ", " ++ show r ++ ")"
@@ -119,6 +121,7 @@ convertToAST = cvtExp
 
         cvtExp :: P.Exp -> Expr ()
         cvtExp (P.Let pat body use)             = Let () (cvtPat pat) (cvtExp body) (cvtExp use)
+        cvtExp (P.Rec var body use)             = LetRec () var (cvtExp body) (cvtExp use)
         cvtExp (P.Application f a)              = App () (cvtExp f) (cvtExp1 a)
         cvtExp (P.Exp1 e)                       = cvtExp1 e
 

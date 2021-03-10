@@ -12,52 +12,10 @@ import Control.Monad.Trans.Except
 import SyntaxTree
 import Types
 
+import Debug.Trace
+
 -- Create an alias of string for a type error
 type TypeError = String
-
--- -- A typed expression is the same as the expression grammar
--- -- in SyntaxTree, only with type annotations on the variables
--- -- when they are scoped by a Let or Lambda expression.
--- data TExpr
---     = TApp TExpr TExpr
---     | TLambda Type Identifier TExpr
---     | TLet Type Identifier TExpr TExpr
---     | TIfThenElse TExpr TExpr TExpr
---     | TLit Literal
---     | TPair TExpr TExpr
---     | TVar Symbol
--- 
--- -- Helper to determine if an expression is an application
--- isTApp :: TExpr -> Bool
--- isTApp (TApp _ _) = True
--- isTApp _ = False
--- 
--- -- Helper to determine if an expression is atomic
--- isTAtom :: TExpr -> Bool
--- isTAtom (TLit _) = True
--- isTAtom (TVar _) = True
--- isTAtom _ = False
--- 
--- -- Show instance for pretty printing typed expressions
--- instance Show TExpr where
---     -- The same as in SyntaxTree - we make application
---     -- left associative and remove unnecessary parentheses
---     show (TApp e1 e2) = e1s ++ " " ++ e2s
---         where
---             e1s
---                 | isTApp e1 || isTAtom e1 = show e1
---                 | otherwise = "(" ++ show e1 ++ ")"
---             e2s
---                 | isTAtom e2 = show e2
---                 | otherwise = "(" ++ show e2 ++ ")"
---     -- Print the rest as expected, but add type annotations now to
---     -- lambdas and lets.
---     show (TLambda t name e) = "$(" ++ name ++ ": " ++ show t ++ ") -> " ++ show e
---     show (TLet t name e1 e2) = "let (" ++ name ++ ": " ++ show t ++ ") = " ++ show e1 ++ " in " ++ show e2
---     show (TIfThenElse p c a) = "if " ++ show p ++ " then " ++ show c ++ " else " ++ show a
---     show (TLit l) = show l
---     show (TPair l r) = "(" ++ show l ++ ", " ++ show r ++ ")"
---     show (TVar n) = show n
 
 -- The following is an implementation of Algorithm W for type inference
 -- and checking of the Hindley-Milner type system.
@@ -96,6 +54,7 @@ instance Typed t => Typed (Expr t) where
     ftv (App _ e1 e2) = ftv e1 `S.union` ftv e2
     ftv (Lam t _ e) = ftv t `S.union` ftv e
     ftv (Let t _ e1 e2) = ftv t `S.union` ftv e1 `S.union` ftv e2
+    ftv (LetRec t _ e1 e2) = ftv t `S.union` ftv e1 `S.union` ftv e2
     ftv (IfThenElse p c a) = ftv p `S.union` ftv c `S.union` ftv a
     ftv (Lit _) = S.empty
     ftv (Pair l r) = ftv l `S.union` ftv r
@@ -106,6 +65,7 @@ instance Typed t => Typed (Expr t) where
     apply s (App t e1 e2) = App (apply s t) (apply s e1) (apply s e2)
     apply s (Lam t n e) = Lam (apply s t) n (apply s e)
     apply s (Let t n e1 e2) = Let (apply s t) n (apply s e1) (apply s e2)
+    apply s (LetRec t n e1 e2) = LetRec (apply s t) n (apply s e1) (apply s e2)
     apply s (IfThenElse p c a) = IfThenElse (apply s p) (apply s c) (apply s a)
     apply s l@(Lit _) = l
     apply s (Pair l r) = Pair (apply s l) (apply s r)
@@ -267,6 +227,19 @@ inferTypeTree expr = dropSubstitution <$> evalState (runExceptT (itt defaultEnv 
                 --         M.insert (Identifier x) (generalise (apply s0 e) t) env
                 updateEnv s0 (TypeEnv e1) (TypeEnv e2) =
                     apply s0 $ TypeEnv (e1 `M.union` e2)
+
+        itt env (LetRec () x e0 e1) = do
+            t1 <- newPolyTy
+            (s0, e0', t1') <- itt (addType t1 env) e0
+            let t1'' = apply s0 t1
+            s0' <- mgu t1' t1''
+            (s1, e1', t') <- itt (addGenType t1'' env) e1
+            let s' = s1 `composeSubs` s0
+            pure (s', LetRec t1'' x (apply s' e0') (apply s' e1'), t')
+
+            where
+                addType t (TypeEnv e) = TypeEnv $ M.insert (Identifier x) (Scheme [] t) e
+                addGenType t (TypeEnv e) = TypeEnv $ M.insert (Identifier x) (generalise env t) e
 
         itt env (IfThenElse p e0 e1) = do
             -- Type check the argument

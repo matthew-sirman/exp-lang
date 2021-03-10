@@ -10,6 +10,7 @@ import Data.Char
 
 %token
     let     { TokenLet }
+    rec     { TokenRec }
     in      { TokenIn }
     if      { TokenIf }
     then    { TokenThen }
@@ -36,45 +37,46 @@ import Data.Char
 %%
 
 Exp 
-    : let Pat '=' Exp in Exp    { Let $2 $4 $6 }
-    | Exp Exp1                  { Application $1 $2 }
-    | Exp1                      { Exp1 $1 }
+    : let Pat '=' Exp in Exp        { Let $2 $4 $6 }
+    | let rec var '=' Exp in Exp    { Rec $3 $5 $7 }
+    | Exp Exp1                      { Application $1 $2 }
+    | Exp1                          { Exp1 $1 }
 
 Exp1
-    : if Exp then Exp else Exp  { IfThenElse $2 $4 $6 }
-    | '$' Pat '->' Exp          { Lambda $2 $4 }
-    | AExp                      { ArithExp $1 }
+    : if Exp then Exp else Exp      { IfThenElse $2 $4 $6 }
+    | '$' Pat '->' Exp              { Lambda $2 $4 }
+    | AExp                          { ArithExp $1 }
 
 AExp 
-    : AExp '+' Term             { Plus $1 $3 }
-    | AExp '-' Term             { Minus $1 $3 }
-    | AExp '<' Term             { LessThan $1 $3 }
-    | AExp '>' Term             { GreaterThan $1 $3 }
-    | AExp '<=' Term            { LessEqual $1 $3 }
-    | AExp '>=' Term            { GreaterEqual $1 $3 }
-    | AExp '==' Term            { EqualTo $1 $3 }
-    | Term                      { Term $1 }
+    : AExp '+' Term                 { Plus $1 $3 }
+    | AExp '-' Term                 { Minus $1 $3 }
+    | AExp '<' Term                 { LessThan $1 $3 }
+    | AExp '>' Term                 { GreaterThan $1 $3 }
+    | AExp '<=' Term                { LessEqual $1 $3 }
+    | AExp '>=' Term                { GreaterEqual $1 $3 }
+    | AExp '==' Term                { EqualTo $1 $3 }
+    | Term                          { Term $1 }
 
 Term 
-    : Term '*' Factor           { Times $1 $3 }
-    | Term '/' Factor           { Div $1 $3 }
-    | Factor                    { Factor $1 }
+    : Term '*' Factor               { Times $1 $3 }
+    | Term '/' Factor               { Div $1 $3 }
+    | Factor                        { Factor $1 }
 
 Factor 
-    : '()'                      { Unit }
-    | int                       { Int $1 }
-    | bool                      { Bool $1 }
-    | var                       { Var $1 }
-    | '(' Exp ',' Exp ')'       { Pair $2 $4 }
-    | '(' Exp ')'               { Nested $2 }
+    : '()'                          { Unit }
+    | int                           { Int $1 }
+    | bool                          { Bool $1 }
+    | var                           { Var $1 }
+    | '(' Exp ',' Exp ')'           { Pair $2 $4 }
+    | '(' Exp ')'                   { Nested $2 }
 
 Pat
-    : var                       { PVar $1 }
-    | '(' Pat ',' Pat ')'       { PPair $2 $4 }
-    | '()'                      { PUnit }
-    | int                       { PInt $1 }
-    | bool                      { PBool $1 }
-    | '(' Pat ')'               { PNest $2 }
+    : var                           { PVar $1 }
+    | '(' Pat ',' Pat ')'           { PPair $2 $4 }
+    | '()'                          { PUnit }
+    | int                           { PInt $1 }
+    | bool                          { PBool $1 }
+    | '(' Pat ')'                   { PNest $2 }
 
 {
 parseError :: [Token] -> a
@@ -84,6 +86,7 @@ type Identifier = String
 
 data Exp
     = Let Pat Exp Exp
+    | Rec Identifier Exp Exp
     | Application Exp Exp1
     | Exp1 Exp1
     deriving Show
@@ -131,6 +134,7 @@ data Pat
 
 data Token
     = TokenLet
+    | TokenRec
     | TokenIn
     | TokenIf
     | TokenThen
@@ -185,11 +189,12 @@ lexNum cs = TokenInt (read num) : lexer rest
 lexVar cs =
     case span isAlpha cs of
         ("let"  , rest) -> TokenLet         : lexer rest
+        ("rec"  , rest) -> TokenRec         : lexer rest
         ("in"   , rest) -> TokenIn          : lexer rest
         ("if"   , rest) -> TokenIf          : lexer rest
         ("then" , rest) -> TokenThen        : lexer rest
         ("else" , rest) -> TokenElse        : lexer rest
         ("True" , rest) -> TokenBool True   : lexer rest
         ("False", rest) -> TokenBool False  : lexer rest
-        (var  , rest) -> TokenVar var       : lexer rest
+        (var    , rest) -> TokenVar var     : lexer rest
 }

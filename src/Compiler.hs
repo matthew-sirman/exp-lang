@@ -17,7 +17,7 @@ data ProgState = ProgState
     , fstack :: [IR.Function IR.VarID]          -- Stack of functions - we always edit the top
     , prog :: IR.Program IR.VarID               -- The current program
     , labelID :: Int                            -- The current label ID - we need to generate these freshly
-    , funcID :: Int                             -- The current function ID - these must also be fresh
+    , funcNames :: [IR.FuncID]                  -- Stack of function names to use
     , varID :: IR.VarID                         -- The current temporary variable
     , hofMap :: M.HashMap IR.FuncID (IR.Closure IR.VarID)   -- a map of functions which return functions
     }
@@ -38,11 +38,8 @@ ctxAdd = M.insert
 -- This should never be able to fail - the program must be closed to
 -- have reached the compile phase. If this fails, there is a bug in 
 -- the compiler!
-ctxLookup :: ST.Identifier -> VarContext -> (IR.Value IR.VarID)
-ctxLookup name ctx = 
-    case M.lookup name ctx of
-        Just v -> v
-        Nothing -> error $ "DEV: Tried to lookup missing element in context."
+ctxLookup :: ST.Identifier -> VarContext -> Maybe (IR.Value IR.VarID)
+ctxLookup =  M.lookup
 
 -- Data structure for typed expressions with builtins reconstructed
 -- This makes compilation easier - we want operators to be computable
@@ -51,6 +48,7 @@ data Expr
     = App Type Expr Expr
     | Lam Type ST.Pattern Expr
     | Let Type ST.Pattern Expr Expr
+    | LetRec Type ST.Identifier Expr Expr
     | Bin Type ST.Builtin Expr Expr
     | IfThenElse Expr Expr Expr
     | Lit ST.Literal
@@ -73,6 +71,7 @@ reconstructBuiltins = reconstruct
         reconstruct (ST.App t e0 e1) = App t (reconstruct e0) (reconstruct e1)
         reconstruct (ST.Lam t x e) = Lam t x (reconstruct e)
         reconstruct (ST.Let t x e e') = Let t x (reconstruct e) (reconstruct e')
+        reconstruct (ST.LetRec t x e e') = LetRec t x (reconstruct e) (reconstruct e')
         reconstruct (ST.IfThenElse p c a) = IfThenElse (reconstruct p) (reconstruct c) (reconstruct a)
         reconstruct (ST.Lit l) = Lit l
         reconstruct (ST.Pair l r) = Pair (reconstruct l) (reconstruct r)
@@ -104,6 +103,7 @@ typeof :: Expr -> Type
 typeof (App t _ _) = t
 typeof (Lam t _ e) = FuncTy t (typeof e)
 typeof (Let _ _ _ e) = typeof e
+typeof (LetRec _ _ _ e) = typeof e
 typeof (Bin t _ _ _) = t
 typeof (IfThenElse _ e _) = typeof e
 typeof (Lit l) = lty l
@@ -115,20 +115,21 @@ typeof (Pair l r) = PairTy (typeof l) (typeof r)
 typeof (Var t _) = t
 
 -- Helper function to find the set of free variables in an expression
-findFVs :: Expr -> S.HashSet (ST.Identifier, Type)
-findFVs = findFVs' S.empty
+findFVs :: S.HashSet ST.Identifier -> Expr -> S.HashSet (ST.Identifier, Type)
+findFVs ex (App _ e1 e2) = findFVs ex e1 `S.union` findFVs ex e2
+findFVs ex (Lam _ pat e) = findFVs (ex `S.union` patternVars pat) e
+findFVs ex (Let _ pat e1 e2) = findFVs ex e1 `S.union` (findFVs (ex `S.union` patternVars pat) e2)
+findFVs ex (LetRec _ x e1 e2) = findFVs newEx e1 `S.union` findFVs newEx e2
     where
-        findFVs' ex (App _ e1 e2) = findFVs' ex e1 `S.union` findFVs' ex e2
-        findFVs' ex (Lam _ pat e) = findFVs' (ex `S.union` patternVars pat) e
-        findFVs' ex (Let _ pat e1 e2) = findFVs' ex e1 `S.union` (findFVs' (ex `S.union` patternVars pat) e2)
-        findFVs' ex (Bin _ _ l r) = findFVs' ex l `S.union` findFVs' ex r
-        findFVs' ex (IfThenElse p c a) = findFVs' ex p `S.union` findFVs' ex c `S.union` findFVs' ex a
-        findFVs' ex (Lit _) = S.empty
-        findFVs' ex (Pair l r) = findFVs' ex l `S.union` findFVs' ex r
-        -- Only add to the free variable set if not bound in exlusion set
-        findFVs' ex (Var t x) 
-            | x `S.member` ex = S.empty
-            | otherwise = S.singleton (x, t)
+        newEx = S.insert x ex
+findFVs ex (Bin _ _ l r) = findFVs ex l `S.union` findFVs ex r
+findFVs ex (IfThenElse p c a) = findFVs ex p `S.union` findFVs ex c `S.union` findFVs ex a
+findFVs ex (Lit _) = S.empty
+findFVs ex (Pair l r) = findFVs ex l `S.union` findFVs ex r
+-- Only add to the free variable set if not bound in exlusion set
+findFVs ex (Var t x) 
+    | x `S.member` ex = S.empty
+    | otherwise = S.singleton (x, t)
 
 -- Helper function to find the set of all names in a pattern
 patternVars :: ST.Pattern -> S.HashSet ST.Identifier
@@ -151,11 +152,11 @@ compile = mkProgram . reconstructBuiltins
                 finalise :: State ProgState (IR.Program IR.VarID)
                 finalise = do
                     -- Make the main function
-                    mkNamedFunc "emain" []
+                    mkNewFunc []
                     -- Add the entry block
                     mkNewBlock
                     -- Compile the program - this will return a value
-                    res <- codegen emptyCtx expr
+                    res <- codegen emptyCtx S.empty expr
                     -- Add a final return instruction from the main
                     -- function
                     addInstruction $ IR.Ret res
@@ -177,17 +178,17 @@ compile = mkProgram . reconstructBuiltins
         -- and functions on the stack is unchanged during a call - this
         -- way we prove that we will never try to pop a block or function which
         -- is not present on the stack.
-        codegen :: VarContext -> Expr -> State ProgState (IR.Value IR.VarID)
+        codegen :: VarContext -> S.HashSet IR.FuncID -> Expr -> State ProgState (IR.Value IR.VarID)
 
         -- Generate an application
-        codegen ctx (App _ f a) = do
+        codegen ctx recs (App _ f a) = do
             -- Generate the function itself
             -- Note we have already typechecked, so this
             -- should always return a function - either in a closure
             -- or in a variable
-            fval <- codegen ctx f
+            fval <- codegen ctx recs f
             -- Generate the argument value
-            arg <- codegen ctx a
+            arg <- codegen ctx recs a
             -- Create a new variable to assign this call to
             call <- mkNewVar
             -- Apply the function to the argument
@@ -235,7 +236,7 @@ compile = mkProgram . reconstructBuiltins
                 callReturn callVar _ _ = IR.Variable callVar
 
         -- Generate a lambda abstraction
-        codegen ctx lam@(Lam t pattern body) = do
+        codegen ctx recs lam@(Lam t pattern body) = do
             -- Create a new function in the program with one argument if
             -- there are no free variables, or 2 if there are (the second
             -- being for the closure)
@@ -259,7 +260,7 @@ compile = mkProgram . reconstructBuiltins
             -- Unpack the closure if necessary
             bodyCtx' <- unpackClosure bodyCtx argCVar
             -- Generate the body with the new names bound
-            rval <- codegen bodyCtx' body
+            rval <- codegen bodyCtx' recs body
             -- Add the return instruction for the value
             -- generated in the body
             addInstruction $ IR.Ret rval
@@ -300,7 +301,7 @@ compile = mkProgram . reconstructBuiltins
                 addHigherOrder _ _ p = p
 
                 fvs :: [(ST.Identifier, Type)]
-                fvs = toList $ findFVs lam
+                fvs = toList $ findFVs recs lam
 
                 requiresClosure :: Bool
                 requiresClosure = case fvs of
@@ -397,24 +398,33 @@ compile = mkProgram . reconstructBuiltins
                                 sz = sizeof t
 
         -- Generate a let binding
-        codegen ctx (Let t pattern body use) = do
+        codegen ctx recs (Let t pattern body use) = do
             -- Generate the body of the let
             -- Bind the given name to this body
-            var <- codegen ctx body
+            var <- codegen ctx recs body
+            -- var <- codegen (bindRecs pattern) body
             useCtx <- unpackPattern ctx pattern t var
             -- Generate the rest of the expression
-            codegen useCtx use
+            codegen useCtx recs use
+
+        codegen ctx recs (LetRec t name body use) = do
+            addNextFuncName name
+            var <- codegen ctx (S.insert name recs) body
+            condFuncNamePop name
+            codegen (M.insert name var ctx) recs use
+            -- where
+            --     ctx' = M.insert name (IR.Closure (IR.FClosure name Nothing)) ctx
 
         -- Generate an if then else
-        codegen ctx (IfThenElse pred cons alt) = do
+        codegen ctx recs (IfThenElse pred cons alt) = do
             -- Generate the predicate in this block
-            pval <- codegen ctx pred
+            pval <- codegen ctx recs pred
 
             -- Next, we generate the the alt branch and get its
             -- label and return value
             mkNewBlock
             ablk <- blockLabel
-            aval <- codegen ctx alt
+            aval <- codegen ctx recs alt
             -- Pop the alt block
             altBlock <- popBlock
 
@@ -428,7 +438,7 @@ compile = mkProgram . reconstructBuiltins
             -- Now generate the cons branch in a new basic block and get a reference to its label
             mkNewBlock
             cblk <- blockLabel
-            cval <- codegen ctx cons
+            cval <- codegen ctx recs cons
             consBlock <- popBlock
 
             -- Next generate the rest block (keeping the invariant that the number
@@ -466,9 +476,9 @@ compile = mkProgram . reconstructBuiltins
 
         -- Generate a binary operator for which there is an instruction
         -- in the IR
-        codegen ctx (Bin _ op lhs rhs) = do
-            lval <- codegen ctx lhs
-            rval <- codegen ctx rhs
+        codegen ctx recs (Bin _ op lhs rhs) = do
+            lval <- codegen ctx recs lhs
+            rval <- codegen ctx recs rhs
             var <- mkNewVar
             addInstruction $ opInstruction op var lval rval
             pure $ IR.Variable var
@@ -485,18 +495,18 @@ compile = mkProgram . reconstructBuiltins
                 opInstruction (ST.CmpOp ST.GE_) = IR.GE
 
         -- Generate a literal value as an immediate
-        codegen ctx (Lit l) = pure $ IR.Immediate $ imm l
+        codegen _ _ (Lit l) = pure $ IR.Immediate $ imm l
             where
                 imm (ST.UnitLit) = IR.Unit
                 imm (ST.IntLit i) = IR.Int64 i
                 imm (ST.BoolLit b) = IR.Bool b
 
         -- Generate a pair on the heap
-        codegen ctx (Pair l r) = do
+        codegen ctx recs (Pair l r) = do
             -- Generate the left part of the pair
-            lval <- codegen ctx l
+            lval <- codegen ctx recs l
             -- Generate the right part of the pair
-            rval <- codegen ctx r
+            rval <- codegen ctx recs r
             -- Allocate an appropriate amount of heap memory
             pair <- mkNewVar
             addInstruction $ IR.MAlloc pair (IR.Immediate $ IR.Int64 (lSize + rSize))
@@ -518,14 +528,23 @@ compile = mkProgram . reconstructBuiltins
         -- always be present, otherwise the expression is not 
         -- closed, and therefore the program is invalid and would
         -- have failed the type checker.
-        codegen ctx (Var _ name) = pure $ ctxLookup name ctx
+        codegen ctx recs (Var _ name) = pure findName
+            where
+                findName = case ctxLookup name ctx of
+                    Just x -> x
+                    Nothing
+                        | name `S.member` recs -> IR.Closure (IR.FClosure name Nothing)
+                        | otherwise -> error $ "DEV: Tried to lookup missing element in context."
 
         -- The inital state of the program. The function and block
         -- stacks start empty, as does the program. We initialise
-        -- the three counters for tracking the current block/function/
-        -- temporary to 0
+        -- the counters for tracking the current block/temporary to 0
         startState :: ProgState
-        startState = ProgState [] [] (IR.Program M.empty) 0 0 0 M.empty
+        startState = ProgState [] [] (IR.Program M.empty) 0 fNameStack 0 M.empty
+            where
+                -- The names for functions starts with emain, then __anonymous0, __anonymous1
+                -- and so on
+                fNameStack = "emain" : map (\f -> "__anonymous" ++ show f) [0..]
 
         -- Create a new block and push it onto the stack
         mkNewBlock :: State ProgState ()
@@ -539,17 +558,6 @@ compile = mkProgram . reconstructBuiltins
                     , labelID = lid + 1
                     }
 
-        -- Create a new function with an arbitrary name and push it onto the stack
-        mkNamedFunc :: IR.FuncID -> [IR.VarID] -> State ProgState ()
-        mkNamedFunc name as = do
-            modify addFunc
-            where
-                -- Create the function based on the given name and push
-                -- to the stack
-                addFunc ps@(ProgState _ fs _ _ _ _ _) = ps
-                    { fstack = IR.mkFunc name as : fstack ps
-                    }
-
         -- Create a new function and push it onto the stack
         mkNewFunc :: [IR.VarID] -> State ProgState ()
         mkNewFunc as = do
@@ -557,10 +565,24 @@ compile = mkProgram . reconstructBuiltins
             where
                 -- We call the functions "func0", "func1", ...
                 -- Each time we add one, we increment the function id
-                addFunc ps@(ProgState _ fs _ _ fid _ _) = ps 
-                    { fstack = IR.mkFunc ("func" ++ show fid) as : (fstack ps) 
-                    , funcID = fid + 1
+                addFunc ps@(ProgState _ fs _ _ (name:rest) _ _) = ps 
+                    { fstack = IR.mkFunc name as : (fstack ps) 
+                    , funcNames = rest
                     }
+
+        addNextFuncName :: IR.FuncID -> State ProgState ()
+        addNextFuncName name = do
+            modify addFunc
+            where
+                addFunc ps@(ProgState _ _ _ _ fs _ _) = ps { funcNames = name:fs }
+
+        condFuncNamePop :: IR.FuncID -> State ProgState ()
+        condFuncNamePop name = do
+            modify condPop
+            where
+                condPop ps@(ProgState _ _ _ _ (n:fs) _ _)
+                    | n /= name = ps
+                    | otherwise = ps { funcNames = fs }
 
         -- Create a new temporary variable. The initial register model
         -- allows us to create an unbounded number of these. We also

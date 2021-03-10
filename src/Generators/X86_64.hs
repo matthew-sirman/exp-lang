@@ -66,7 +66,7 @@ regAllocOrder =
     ]
 
 callerSaved :: S.HashSet Register
-callerSaved = S.fromList [R10, R11]
+callerSaved = S.fromList [R10, R11, RDI, RSI, RDX, RCX, R8, R9]
 
 calleeSaved :: S.HashSet Register
 calleeSaved = S.fromList [R12, R13, R14, R15, RBX]
@@ -91,7 +91,7 @@ data Instruction
     | Mul RegAccess
     | CQTO
     | Div RegAccess
-    | Cmp Value Value
+    | Cmp Value RegAccess
     | SetEQ RegAccess
     | SetLT RegAccess
     | SetGT RegAccess
@@ -103,7 +103,7 @@ data Instruction
     | Read RegAccess RegAccess
     | DCall Label
     | ICall RegAccess
-    | JmpE Label
+    | JmpNE Label
     | Jmp Label
     | Ret
     | Push Value
@@ -139,6 +139,9 @@ data X86IRSizedReg = X86IRSizedReg RSize X86IRReg
 
 getIRRegister :: X86IRSizedReg -> X86IRReg
 getIRRegister (X86IRSizedReg _ r) = r
+
+setSize :: RSize -> X86IRSizedReg -> X86IRSizedReg
+setSize sz (X86IRSizedReg _ r) = X86IRSizedReg sz r
 
 instance Hashable VirtualReg
 instance Hashable X86IRReg
@@ -176,19 +179,19 @@ createX86IRBB fixedMap (IR.BasicBlock name is) = do
 
         x86 ((IR.Mul res l r) :<| rest) = do
             let res' = X86IRSizedReg Q8 $ VirtualReg (Virtual res)
-                movl = IR.Move rax (translate l)
-                movr = IR.Move res' (translate r)
-                mul = IR.Mul rax (IR.Variable rax) (IR.Variable res')
+                movI = IR.Move rax (translate l)
+                mul = IR.Mul rax (IR.Variable rax) (translate r)
+                movO = IR.Move res' (IR.Variable rax)
             rest' <- x86 rest
-            pure $ movl :<| movr :<| mul :<| rest'
+            pure $ movI :<| mul :<| movO :<| rest'
 
         x86 ((IR.Div res l r) :<| rest) = do
             let res' = X86IRSizedReg Q8 $ VirtualReg (Virtual res)
-                movl = IR.Move rax (translate l)
-                movr = IR.Move res' (translate r)
-                div = IR.Div rax (IR.Variable rax) (IR.Variable res')
+                movI = IR.Move rax (translate l)
+                div = IR.Div rax (IR.Variable rax) (translate r)
+                movO = IR.Move res' (IR.Variable rax)
             rest' <- x86 rest
-            pure $ movl :<| movr :<| div :<| rest'
+            pure $ movI :<| div :<| movO :<| rest'
 
         x86 ((IR.EQ res l r) :<| rest) = x86cmpOp IR.EQ res l r rest
         x86 ((IR.LT res l r) :<| rest) = x86cmpOp IR.LT res l r rest
@@ -249,7 +252,7 @@ createX86IRBB fixedMap (IR.BasicBlock name is) = do
             pure $ movI0 :<| movI1 :<| call :<| movO :<| rest'
 
         x86 ((IR.Branch val lab) :<| rest) = do
-            let br = IR.Branch (translate val) lab
+            let br = IR.Branch (setSize B1 <$> translate val) lab
             rest' <- x86 rest
             pure $ br :<| rest'
 
@@ -294,8 +297,8 @@ createX86IRBB fixedMap (IR.BasicBlock name is) = do
         x86cmpOp op res l r rest = do
             fresh <- freshReg Q8
             let res' = X86IRSizedReg B1 $ VirtualReg (Virtual res)
-                mov = IR.Move fresh (translate r)
-                op' = op res' (translate l) (IR.Variable fresh)
+                mov = IR.Move fresh (translate l)
+                op' = op res' (IR.Variable fresh) (translate r)
             rest' <- x86 rest
             pure $ mov :<| op' :<| rest'
 
@@ -370,12 +373,17 @@ allocateWithSaves allocator nodeIDMap liveVars allVars (IR.Function name as bs) 
         addCallerSaves :: IR.BasicBlock X86IRSizedReg -> IR.BasicBlock RegAccess
         addCallerSaves (IR.BasicBlock lab is) = IR.BasicBlock lab (alloc $ Seq.zip is blockLVs)
             where
+                -- Take the tail of this - this gives us the live variables AFTER each
+                -- line
                 blockLVs :: Seq (S.HashSet X86IRReg)
-                blockLVs = IR.liveVars $ blockUnwrap $ M.lookup nID (IR.nodes liveVars)
+                blockLVs = sTail $ IR.liveVars $ blockUnwrap $ M.lookup nID (IR.nodes liveVars)
                     where
                         nID = fromJust $ M.lookup lab nodeIDMap
                         blockUnwrap :: Maybe (IR.Node r) -> r
                         blockUnwrap (Just (IR.Node (IR.BlockNode b) _ _)) = b
+
+                        sTail :: Seq a -> Seq a
+                        sTail (_ :<| t) = t
                 
                 alloc :: Seq (IR.Instruction X86IRSizedReg, S.HashSet X86IRReg) -> Seq (IR.Instruction RegAccess)
                 alloc Seq.Empty = Seq.Empty
@@ -589,26 +597,13 @@ generateX86 prog = X86_64Code text blocks
             (CQTO) :<|
             (Div r) :<|
             emit rest
-        emit ((IR.EQ res l r) :<| rest) =
-            (Cmp (valEmit l) (valEmit r)) :<|
-            (SetEQ res) :<|
-            emit rest
-        emit ((IR.LT res l r) :<| rest) =
-            (Cmp (valEmit l) (valEmit r)) :<|
-            (SetLT res) :<|
-            emit rest
-        emit ((IR.GT res l r) :<| rest) =
-            (Cmp (valEmit l) (valEmit r)) :<|
-            (SetGT res) :<|
-            emit rest
-        emit ((IR.LE res l r) :<| rest) =
-            (Cmp (valEmit l) (valEmit r)) :<|
-            (SetLE res) :<|
-            emit rest
-        emit ((IR.GE res l r) :<| rest) =
-            (Cmp (valEmit l) (valEmit r)) :<|
-            (SetGE res) :<|
-            emit rest
+
+        emit ((IR.EQ res l r) :<| rest) = mkCmpOp SetEQ res l r rest
+        emit ((IR.LT res l r) :<| rest) = mkCmpOp SetLT res l r rest
+        emit ((IR.GT res l r) :<| rest) = mkCmpOp SetGT res l r rest
+        emit ((IR.LE res l r) :<| rest) = mkCmpOp SetLE res l r rest
+        emit ((IR.GE res l r) :<| rest) = mkCmpOp SetGE res l r rest
+
         emit ((IR.Move dst (IR.Variable src)) :<| rest)
             | src == dst = emit rest                -- skip over redundant moves
         emit ((IR.Move dst (IR.Closure (IR.FClosure lab Nothing))) :<| rest) =
@@ -629,9 +624,9 @@ generateX86 prog = X86_64Code text blocks
         emit ((IR.Call _ (IR.Variable v) _) :<| rest) =
             (ICall v) :<|
             emit rest
-        emit ((IR.Branch val lab) :<| rest) = 
-            (Cmp (Immediate $ I64 0) (valEmit val)) :<|
-            (JmpE lab) :<|
+        emit ((IR.Branch (IR.Variable v) lab) :<| rest) = 
+            (Cmp (Immediate $ I64 1) v) :<|
+            (JmpNE lab) :<|
             emit rest
         emit ((IR.Jump lab) :<| rest) =
             (Jmp lab) :<|
@@ -651,4 +646,11 @@ generateX86 prog = X86_64Code text blocks
 
         emit Seq.Empty = Seq.Empty
             
+        mkCmpOp :: (RegAccess -> Instruction) -> RegAccess -> IR.Value RegAccess -> IR.Value RegAccess
+                -> Seq (IR.Instruction RegAccess) -> Seq Instruction
+        mkCmpOp op res (IR.Variable l) r rest =
+            (Cmp (valEmit r) l) :<|
+            (op res) :<|
+            emit rest
+
 
