@@ -1,6 +1,7 @@
 {
 module Parser (
     Exp(..)
+  , ArgList(..)
   , Exp1(..)
   , AExp(..)
   , Term(..)
@@ -47,46 +48,50 @@ import Control.Monad.State
 %%
 
 Exp 
-    : let Pat '=' Exp in Exp        { Let $2 $4 $6 }
-    | let rec var '=' Exp in Exp    { Rec $3 $5 $7 }
-    | Exp Exp1                      { Application $1 $2 }
-    | Exp1                          { Exp1 $1 }
+    : let Pat ArgList '=' Exp in Exp        { Let $2 $3 $5 $7 }
+    | let rec var ArgList '=' Exp in Exp    { Rec $3 $4 $6 $8 }
+    | Exp Exp1                              { Application $1 $2 }
+    | Exp1                                  { Exp1 $1 }
+
+ArgList
+    :                                       { ArgEmpty }
+    | ArgList Pat                           { ArgCons $2 $1 }
 
 Exp1
-    : if Exp then Exp else Exp      { IfThenElse $2 $4 $6 }
-    | '$' Pat '->' Exp              { Lambda $2 $4 }
-    | AExp                          { ArithExp $1 }
+    : if Exp then Exp else Exp              { IfThenElse $2 $4 $6 }
+    | '$' Pat '->' Exp                      { Lambda $2 $4 }
+    | AExp                                  { ArithExp $1 }
 
 AExp 
-    : AExp '+' Term                 { Plus $1 $3 }
-    | AExp '-' Term                 { Minus $1 $3 }
-    | AExp '<' Term                 { LessThan $1 $3 }
-    | AExp '>' Term                 { GreaterThan $1 $3 }
-    | AExp '<=' Term                { LessEqual $1 $3 }
-    | AExp '>=' Term                { GreaterEqual $1 $3 }
-    | AExp '==' Term                { EqualTo $1 $3 }
-    | Term                          { Term $1 }
+    : AExp '+' Term                         { Plus $1 $3 }
+    | AExp '-' Term                         { Minus $1 $3 }
+    | AExp '<' Term                         { LessThan $1 $3 }
+    | AExp '>' Term                         { GreaterThan $1 $3 }
+    | AExp '<=' Term                        { LessEqual $1 $3 }
+    | AExp '>=' Term                        { GreaterEqual $1 $3 }
+    | AExp '==' Term                        { EqualTo $1 $3 }
+    | Term                                  { Term $1 }
 
 Term 
-    : Term '*' Factor               { Times $1 $3 }
-    | Term '/' Factor               { Div $1 $3 }
-    | Factor                        { Factor $1 }
+    : Term '*' Factor                       { Times $1 $3 }
+    | Term '/' Factor                       { Div $1 $3 }
+    | Factor                                { Factor $1 }
 
 Factor 
-    : '()'                          { Unit }
-    | int                           { Int $1 }
-    | bool                          { Bool $1 }
-    | var                           { Var $1 }
-    | '(' Exp ',' Exp ')'           { Pair $2 $4 }
-    | '(' Exp ')'                   { Nested $2 }
+    : '()'                                  { Unit }
+    | int                                   { Int $1 }
+    | bool                                  { Bool $1 }
+    | var                                   { Var $1 }
+    | '(' Exp ',' Exp ')'                   { Pair $2 $4 }
+    | '(' Exp ')'                           { Nested $2 }
 
 Pat
-    : var                           { PVar $1 }
-    | '(' Pat ',' Pat ')'           { PPair $2 $4 }
-    | '()'                          { PUnit }
-    | int                           { PInt $1 }
-    | bool                          { PBool $1 }
-    | '(' Pat ')'                   { PNest $2 }
+    : var                                   { PVar $1 }
+    | '(' Pat ',' Pat ')'                   { PPair $2 $4 }
+    | '()'                                  { PUnit }
+    | int                                   { PInt $1 }
+    | bool                                  { PBool $1 }
+    | '(' Pat ')'                           { PNest $2 }
 
 {
 parseError :: [Token] -> a
@@ -95,10 +100,15 @@ parseError _ = error "Parse error"
 type Identifier = String
 
 data Exp
-    = Let Pat Exp Exp
-    | Rec Identifier Exp Exp
+    = Let Pat ArgList Exp Exp
+    | Rec Identifier ArgList Exp Exp
     | Application Exp Exp1
     | Exp1 Exp1
+    deriving Show
+
+data ArgList
+    = ArgEmpty
+    | ArgCons Pat ArgList
     deriving Show
 
 data Exp1

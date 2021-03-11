@@ -120,10 +120,14 @@ convertToAST = cvtExp
         -- This process is actually overall very simple
 
         cvtExp :: P.Exp -> Expr ()
-        cvtExp (P.Let pat body use)             = Let () (cvtPat pat) (cvtExp body) (cvtExp use)
-        cvtExp (P.Rec var body use)             = LetRec () var (cvtExp body) (cvtExp use)
+        cvtExp (P.Let pat as body use)          = Let () (cvtPat pat) (cvtArgs as $ cvtExp body) (cvtExp use)
+        cvtExp (P.Rec var as body use)          = LetRec () var (cvtArgs as $ cvtExp body) (cvtExp use)
         cvtExp (P.Application f a)              = App () (cvtExp f) (cvtExp1 a)
         cvtExp (P.Exp1 e)                       = cvtExp1 e
+
+        cvtArgs :: P.ArgList -> Expr () -> Expr ()
+        cvtArgs P.ArgEmpty e = e
+        cvtArgs (P.ArgCons a as) e = Lam () (cvtPat a) (cvtArgs as e)
 
         cvtExp1 :: P.Exp1 -> Expr ()
         cvtExp1 (P.IfThenElse pred cons alt)    = IfThenElse (cvtExp pred) (cvtExp cons) (cvtExp alt)
