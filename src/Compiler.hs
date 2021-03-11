@@ -189,15 +189,23 @@ compile = mkProgram . reconstructBuiltins
             fval <- codegen ctx recs f
             -- Generate the argument value
             arg <- codegen ctx recs a
+            arg' <- condMkArgClosure arg
             -- Create a new variable to assign this call to
             call <- mkNewVar
             -- Apply the function to the argument
-            addInstruction $ IR.Call call fval (argList fval arg)
+            addInstruction $ IR.Call call fval (argList fval arg')
             -- Return the result of this call
             cr <- gets $ callReturn call fval
             pure cr
 
             where
+                condMkArgClosure :: IR.Value IR.VarID -> State ProgState (IR.Value IR.VarID)
+                condMkArgClosure cl@(IR.Closure _) = do
+                    clVar <- mkNewVar
+                    addInstruction $ IR.MAlloc clVar (IR.Immediate $ IR.Int64 ptrSize)
+                    addInstruction $ IR.Write cl (IR.Variable clVar) ptrSize
+                    pure $ IR.Variable clVar
+                condMkArgClosure other = pure other
                 -- NOTE: These should both be safe because the expression was type checked
                 -- therefore the fval should ALWAYS return a function
                 argList :: IR.Value IR.VarID -> IR.Value IR.VarID -> [IR.Value IR.VarID]

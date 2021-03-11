@@ -20,7 +20,7 @@ data RSize
     | E4
     | W2
     | B1
-    deriving (Ord, Eq, Generic)
+    deriving (Ord, Eq, Generic, Show)
 
 data Register
     = R10       -- General purpose (caller saved)
@@ -37,7 +37,7 @@ data Register
     | RSI       -- Used for second arg
     | RDI       -- Used for first arg
     | RAX       -- Used for return
-    deriving (Ord, Eq, Generic)
+    deriving (Ord, Eq, Generic, Show)
 
 data RegAccess = RegAccess RSize Register
     deriving (Ord, Eq, Generic)
@@ -129,6 +129,10 @@ data VirtualReg
     | Fresh IR.VarID
     deriving (Ord, Eq, Generic)
 
+instance Show VirtualReg where
+    show (Virtual v) = show v
+    show (Fresh f) = "f" ++ show f
+
 data X86IRReg
     = VirtualReg VirtualReg
     | ConcreteReg Register
@@ -136,6 +140,13 @@ data X86IRReg
 
 data X86IRSizedReg = X86IRSizedReg RSize X86IRReg
     deriving (Ord, Eq, Generic)
+
+instance Show X86IRReg where
+    show (VirtualReg v) = show v
+    show (ConcreteReg r) = show r
+
+instance Show X86IRSizedReg where
+    show (X86IRSizedReg _ r) = show r
 
 getIRRegister :: X86IRSizedReg -> X86IRReg
 getIRRegister (X86IRSizedReg _ r) = r
@@ -234,6 +245,16 @@ createX86IRBB fixedMap (IR.BasicBlock name is) = do
         -- x86 calling convention - first argument should be in
         -- rdi, result returned always in rax
         -- TODO: Add PROPER support for multiple args!
+        x86 ((IR.Call res fun@(IR.Variable _) [arg]) :<| rest) = do
+            funReg <- freshReg Q8
+            let res' = X86IRSizedReg Q8 $ VirtualReg (Virtual res)
+                movI = IR.Move rdi (translate arg)
+                readF = IR.Read funReg (translate fun) 8
+                call = IR.Call rax (IR.Variable funReg) [IR.Variable rdi]
+                movO = IR.Move res' (IR.Variable rax)
+            rest' <- x86 rest
+            pure $ movI :<| readF :<| call :<| movO :<| rest'
+
         x86 ((IR.Call res fun [arg]) :<| rest) = do
             let res' = X86IRSizedReg Q8 $ VirtualReg (Virtual res)
                 movI = IR.Move rdi (translate arg)
@@ -241,6 +262,17 @@ createX86IRBB fixedMap (IR.BasicBlock name is) = do
                 movO = IR.Move res' (IR.Variable rax)
             rest' <- x86 rest
             pure $ movI :<| call :<| movO :<| rest'
+        
+        x86 ((IR.Call res fun@(IR.Variable _) [arg1, arg2]) :<| rest) = do
+            funReg <- freshReg Q8
+            let res' = X86IRSizedReg Q8 $ VirtualReg (Virtual res)
+                movI0 = IR.Move rdi (translate arg1)
+                movI1 = IR.Move rsi (translate arg2)
+                readF = IR.Read funReg (translate fun) 8
+                call = IR.Call rax (IR.Variable funReg) [IR.Variable rdi, IR.Variable rsi]
+                movO = IR.Move res' (IR.Variable rax)
+            rest' <- x86 rest
+            pure $ movI0 :<| movI1 :<| readF :<| call :<| movO :<| rest'
 
         x86 ((IR.Call res fun [arg1, arg2]) :<| rest) = do
             let res' = X86IRSizedReg Q8 $ VirtualReg (Virtual res)

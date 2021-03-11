@@ -7,7 +7,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State
-import Parser (parse, lexer)
+import Parser (parse, runLexer)
 import SyntaxTree (convertToAST, Expr)
 import Typing (inferTypeTree, TypeError, Type)
 import Compiler (compile)
@@ -49,7 +49,7 @@ process source =
         Left err -> throwE err
         Right (expr, _) -> pure expr
     where
-        proc = inferTypeTree . convertToAST . parse . lexer
+        proc = inferTypeTree . convertToAST . parse . runLexer
 
 compileCode :: Expr Type -> Process (Program VarID)
 compileCode = pure . compile

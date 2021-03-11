@@ -1,7 +1,17 @@
 {-# OPTIONS_GHC -w #-}
-module Parser where
+module Parser (
+    Exp(..)
+  , Exp1(..)
+  , AExp(..)
+  , Term(..)
+  , Factor(..)
+  , Pat(..)
+  , runLexer
+  , parse
+)where
 
 import Data.Char
+import Control.Monad.State
 import qualified Data.Array as Happy_Data_Array
 import qualified Data.Bits as Bits
 import Control.Applicative(Applicative(..))
@@ -974,43 +984,73 @@ data Token
     | TokenComma
     deriving Show
 
-lexer :: String -> [Token]
-lexer [] = []
+data LexerState = LexerState
+    { inComment :: Bool
+    }
+
+runLexer :: String -> [Token]
+runLexer source = evalState (lexer source) emptyLexState
+    where
+        emptyLexState = LexerState
+            { inComment = False
+            }
+
+lexer :: String -> State LexerState [Token]
+lexer [] = pure []
 lexer (c:cs)
     | isSpace c = lexer cs
     | isAlpha c = lexVar (c:cs)
     | isDigit c = lexNum (c:cs)
-lexer ('(':')':cs) = TokenUnit : lexer cs
-lexer ('=':'=':cs) = TokenEqEq : lexer cs
-lexer ('=':cs) = TokenEq : lexer cs
-lexer ('$':cs) = TokenLam : lexer cs
-lexer ('-':'>':cs) = TokenArrow : lexer cs
-lexer ('+':cs) = TokenPlus : lexer cs
-lexer ('-':cs) = TokenMinus : lexer cs
-lexer ('*':cs) = TokenTimes : lexer cs
-lexer ('/':cs) = TokenDiv : lexer cs
-lexer ('<':'=':cs) = TokenLE : lexer cs
-lexer ('>':'=':cs) = TokenGE : lexer cs
-lexer ('<':cs) = TokenLT : lexer cs
-lexer ('>':cs) = TokenGT : lexer cs
-lexer ('(':cs) = TokenOB : lexer cs
-lexer (')':cs) = TokenCB : lexer cs
-lexer (',':cs) = TokenComma : lexer cs
+lexer ('(':'*':cs)  = do
+    modify setComment
+    lexer cs
+    where
+        setComment s = s { inComment = True }
+lexer ('*':')':cs)  = do
+    modify unsetComment
+    lexer cs
+    where
+        unsetComment s = s { inComment = False }
+lexer ('(':')':cs)  = add TokenUnit  cs
+lexer ('=':'=':cs)  = add TokenEqEq  cs
+lexer ('=':cs)      = add TokenEq    cs
+lexer ('$':cs)      = add TokenLam   cs
+lexer ('-':'>':cs)  = add TokenArrow cs
+lexer ('+':cs)      = add TokenPlus  cs
+lexer ('-':cs)      = add TokenMinus cs
+lexer ('*':cs)      = add TokenTimes cs
+lexer ('/':cs)      = add TokenDiv   cs
+lexer ('<':'=':cs)  = add TokenLE    cs
+lexer ('>':'=':cs)  = add TokenGE    cs
+lexer ('<':cs)      = add TokenLT    cs
+lexer ('>':cs)      = add TokenGT    cs
+lexer ('(':cs)      = add TokenOB    cs
+lexer (')':cs)      = add TokenCB    cs
+lexer (',':cs)      = add TokenComma cs
 
-lexNum cs = TokenInt (read num) : lexer rest
+lexNum cs = add (TokenInt (read num)) rest
     where (num, rest) = span isDigit cs
 
 lexVar cs =
-    case span isAlpha cs of
-        ("let"  , rest) -> TokenLet         : lexer rest
-        ("rec"  , rest) -> TokenRec         : lexer rest
-        ("in"   , rest) -> TokenIn          : lexer rest
-        ("if"   , rest) -> TokenIf          : lexer rest
-        ("then" , rest) -> TokenThen        : lexer rest
-        ("else" , rest) -> TokenElse        : lexer rest
-        ("True" , rest) -> TokenBool True   : lexer rest
-        ("False", rest) -> TokenBool False  : lexer rest
-        (var    , rest) -> TokenVar var     : lexer rest
+    case span isAlphaNum cs of
+        ("let"  , rest) -> add TokenLet             rest
+        ("rec"  , rest) -> add TokenRec             rest
+        ("in"   , rest) -> add TokenIn              rest
+        ("if"   , rest) -> add TokenIf              rest
+        ("then" , rest) -> add TokenThen            rest
+        ("else" , rest) -> add TokenElse            rest
+        ("True" , rest) -> add (TokenBool True)     rest
+        ("False", rest) -> add (TokenBool False)    rest
+        (var    , rest) -> add (TokenVar var)       rest
+
+add :: Token -> String -> State LexerState [Token]
+add t cs = do
+    comment <- gets inComment
+    rest <- lexer cs
+    if comment then
+        pure rest
+    else
+        pure $ t : rest
 {-# LINE 1 "templates/GenericTemplate.hs" #-}
 -- $Id: GenericTemplate.hs,v 1.26 2005/01/14 14:47:22 simonmar Exp $
 
