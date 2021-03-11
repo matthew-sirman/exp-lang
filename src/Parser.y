@@ -55,7 +55,7 @@ Exp
 
 ArgList
     :                                       { ArgEmpty }
-    | ArgList Pat                           { ArgCons $2 $1 }
+    | Pat ArgList                           { ArgCons $1 $2 }
 
 Exp1
     : if Exp then Exp else Exp              { IfThenElse $2 $4 $6 }

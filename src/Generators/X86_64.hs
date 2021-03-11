@@ -638,6 +638,8 @@ generateX86 prog = X86_64Code text blocks
 
         emit ((IR.Move dst (IR.Variable src)) :<| rest)
             | src == dst = emit rest                -- skip over redundant moves
+        emit ((IR.Move dst (IR.Closure (IR.FClosure lab (Just src)))) :<| rest)
+            | src == dst = emit rest                -- skip over redundant moves
         emit ((IR.Move dst (IR.Closure (IR.FClosure lab Nothing))) :<| rest) =
             LEA lab dst :<|
             emit rest
